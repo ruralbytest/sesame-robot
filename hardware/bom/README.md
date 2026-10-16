@@ -31,6 +31,9 @@ Every part required to assemble Sesame is cataloged here. Pick the wiring strate
 | 3-pin male headers | 8 | Build the servo breakout; match spacing to MG90 plugs | [Amazon](https://www.amazon.com/s?k=pin+header+strip) |
 | Buck converter (5–12 V in to stable 5V/3A out) | 1 | Powers motors + MCU when using batteries | [Amazon](https://www.amazon.com/s?k=3a+dc+dc+buck+converter+module) |
 
+> [!NOTE]
+> **Seeed Studio XIAO ESP32-S3 alternative:** A Seeed XIAO ESP32-S3 can replace the S2 Mini on the hand-wired harness. Its 8 LEDC channels drive all 8 servos directly on hardware PWM, and the firmware auto-detects the board (no code edit). See the XIAO ESP32-S3 pin table in [firmware/README.md](../../firmware/README.md).
+
 ## Wiring Option B – Sesame Distro Board V3/V2 (Included in Build Kits)
 
 > [!NOTE]

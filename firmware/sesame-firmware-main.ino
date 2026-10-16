@@ -27,6 +27,11 @@
 #define OLED_RESET -1
 #define OLED_I2C_ADDR 0x3C
 
+#if defined(ARDUINO_XIAO_ESP32S3)
+// Seeed Studio XIAO ESP32-S3 (auto-selected when the XIAO_ESP32S3 board is chosen)
+#define I2C_SDA 5   // D4 - XIAO default SDA
+#define I2C_SCL 6   // D5 - XIAO default SCL
+#else
 // I2C Pins for Distro Board V2 / V3
 //#define I2C_SDA 8
 //#define I2C_SCL 9
@@ -38,6 +43,7 @@
 // I2C Pins for S2 Mini Board
 #define I2C_SDA 33
 #define I2C_SCL 35
+#endif
 
 
 // DNS Server for Captive Portal
@@ -97,6 +103,15 @@ const uint32_t WIFI_SETUP_START_DELAY_MS = 300;  // let the HTTP response flush 
 // If you are using a different board, please adjust the servoPins array accordingly.
 // ======================================================================
 Servo servos[8];
+#if defined(ARDUINO_XIAO_ESP32S3)
+// Seeed Studio XIAO ESP32-S3 - all 8 servos run on LEDC hardware PWM via
+// ESP32Servo (the S3 has 8 LEDC channels). Pins match the as-built wiring.
+// OLED I2C is on D4/D5; D7 is free.
+// L3 is on D6 (GPIO43, the UART0 boot-log pin) -> brief harmless twitch on
+// reset; move L3 to the free D7 (GPIO44) and update this array to avoid it.
+//   R1=D0  R2=D3  L1=D2  L2=D1  R4=D8  R3=D10  L3=D6  L4=D9
+const int servoPins[8] = {1, 4, 3, 2, 7, 9, 43, 8};
+#else
 // Sesame Distro Board V3 Pinout [NEW]
 //const int servoPins[8] = {4, 5, 6, 7, 10, 11, 12, 13};
 
@@ -108,6 +123,7 @@ Servo servos[8];
 
 // Lolin S2 Mini Pinout
 const int servoPins[8] = {1, 2, 4, 6, 8, 10, 13, 14};
+#endif
 
 // Subtrim values for each servo (offset in degrees)
 int8_t servoSubtrim[8] = {0, 0, 0, 0, 0, 0, 0, 0};

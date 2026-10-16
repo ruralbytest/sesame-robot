@@ -16,6 +16,8 @@ const int servoPins[8] = {1, 2, 4, 6, 8, 10, 13, 14};
 // const int servoPins[8] = {4, 5, 6, 7, 15, 16, 17, 18};
 // Distro board V1 pins: (uncomment if needed)
 // const int servoPins[8] = {15, 2, 23, 19, 4, 16, 17, 18};
+// Seeed XIAO ESP32-S3 pins (matches sesame-firmware-main.ino): (uncomment if needed)
+// const int servoPins[8] = {1, 4, 3, 2, 7, 9, 43, 8};
 
 
 

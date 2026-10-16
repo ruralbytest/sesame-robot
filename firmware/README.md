@@ -60,6 +60,7 @@ This document provides technical information on the firmware architecture, contr
    - For Lolin S2 Mini: Select "LOLIN S2 Mini"
    - For Sesame Distro Board V1: Select "ESP32 Dev Module"
    - For Sesame Distro Board V2 or V3: Select "ESP32S3 Dev Module"
+   - For Seeed Studio XIAO ESP32-S3: Select "XIAO_ESP32S3"
 4. **Configure board settings**:
 
    - **For Lolin S2 Mini**:
@@ -70,6 +71,8 @@ This document provides technical information on the firmware architecture, contr
      - **USB CDC On Boot**: "Enabled" (Required for Serial Monitor)
      - **Flash Mode**: "QIO 80MHz"
      - **Partition Scheme**: "Default 4MB with spiffs"
+   - **For Seeed Studio XIAO ESP32-S3**:
+     - **USB CDC On Boot**: "Enabled" (Required for Serial Monitor / CLI over the XIAO native USB)
 5. **Select the correct port**:
 
    - Go to **Tools → Port** and select your ESP32's COM port
@@ -81,6 +84,7 @@ This document provides technical information on the firmware architecture, contr
    - **If you built with the Distro Board V3:** Uncomment the V3 `servoPins` array and `I2C_SDA`/`I2C_SCL` defines. Comment out others.
    - **If you built with the Distro Board V2:** Uncomment the V2 `servoPins` array and `I2C_SDA`/`I2C_SCL` defines. Comment out others.
    - **If you built with the Distro Board V1:** Uncomment the V1 `servoPins` array and `I2C_SDA`/`I2C_SCL` defines. Comment out others.
+   - **If you built with the Seeed Studio XIAO ESP32-S3:** Nothing to change — the firmware auto-detects the XIAO (via the `ARDUINO_XIAO_ESP32S3` board macro) and selects the correct `servoPins` and I2C pins. Just pick "XIAO_ESP32S3" in step 3.
 7. **(Optional) Configure network mode**:
 
    - If you want the robot to connect to your WiFi network (for API access and remote control), edit the network configuration section (around line 17-22):
@@ -777,6 +781,31 @@ The firmware abstracts pin definitions via the `servoPins` array. The default co
 | Motor 7           | 7           | 18          | L4                           |
 | **I2C SDA** | -           | **8** | SSD1306 Data (Hardware I2C)  |
 | **I2C SCL** | -           | **9** | SSD1306 Clock (Hardware I2C) |
+
+#### Seeed Studio XIAO ESP32-S3 (ESP32-S3)
+
+On the XIAO ESP32-S3 the configuration is auto-detected (`ARDUINO_XIAO_ESP32S3`) — there is no comment/uncomment step. All 8 servos run on LEDC hardware PWM via `ESP32Servo`. The pin labels below are the silkscreened `D` numbers on the XIAO header and match the reference as-built wiring.
+
+| Motor/Component | Array Index | XIAO Pin | GPIO Pin | Notes                        |
+| --------------- | ----------- | -------- | -------- | ---------------------------- |
+| Motor 0         | 0           | D0       | 1        | R1                           |
+| Motor 1         | 1           | D3       | 4        | R2                           |
+| Motor 2         | 2           | D2       | 3        | L1                           |
+| Motor 3         | 3           | D1       | 2        | L2                           |
+| Motor 4         | 4           | D8       | 7        | R4                           |
+| Motor 5         | 5           | D10      | 9        | R3                           |
+| Motor 6         | 6           | D6       | 43       | L3                           |
+| Motor 7         | 7           | D9       | 8        | L4                           |
+| **I2C SDA**     | -           | **D4**   | **5**    | SSD1306 Data (Hardware I2C)  |
+| **I2C SCL**     | -           | **D5**   | **6**    | SSD1306 Clock (Hardware I2C) |
+
+D7 is the only unused GPIO. To verify the wiring one servo at a time, flash [debugging-firmware/xiao-mapping-tester](debugging-firmware/xiao-mapping-tester/xiao-mapping-tester.ino).
+
+> [!NOTE]
+> L3 is on D6 (GPIO43), the ESP32-S3 UART0 TX / boot-log pin — expect a brief,
+> harmless servo twitch on every reset while the bootloader logs over it. To avoid
+> it, move L3 to the unused D7 (GPIO44) and update `servoPins[]`. D2 (GPIO3) is an
+> ESP32-S3 strapping pin but works fine as a servo output once firmware is running.
 
 ### Porting to Other ESP32 Variants
 
