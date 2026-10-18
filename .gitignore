@@ -2,3 +2,6 @@
 .idea/
 __pycache__/
 *.pyc
+
+# Head sketch: copied from firmware/face-bitmaps.h before building
+firmware/head-firmware/sesame-head/face-bitmaps.h
