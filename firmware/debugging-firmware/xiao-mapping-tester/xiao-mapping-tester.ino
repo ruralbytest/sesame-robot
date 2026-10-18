@@ -5,16 +5,19 @@
 // only ever one servo is powered) and announces each over Serial - watch the
 // robot and confirm the wiring with zero ambiguity.
 //
-// Pin map matches sesame-firmware-main.ino  servoPins[] = {1,4,3,2,7,9,43,8}:
+// Pin map matches sesame-firmware-main.ino with the head link (the default,
+// XIAO_HEAD_LINK=1)  servoPins[] = {1,2,3,4,5,6,7,8}:
 //   idx  servo  XIAO pin  GPIO
 //    0    R1     D0          1
-//    1    R2     D3          4
+//    1    R2     D1          2
 //    2    L1     D2          3
-//    3    L2     D1          2
-//    4    R4     D8          7
-//    5    R3     D10         9
-//    6    L3     D6         43
+//    3    L2     D3          4
+//    4    R4     D4          5
+//    5    R3     D5          6
+//    6    L3     D8          7
 //    7    L4     D9          8
+// D6/D7 are the head link and D10 is spare. For the older XIAO + OLED wiring,
+// swap in the commented arrays below.
 //
 // Board: "XIAO_ESP32S3"  |  USB CDC On Boot: Enabled  |  Serial 115200
 //
@@ -23,9 +26,12 @@
 
 #include <ESP32Servo.h>
 
-const int   servoPins[8]   = {  1,    4,    3,    2,    7,    9,   43,    8  };
+const int   servoPins[8]   = {  1,    2,    3,    4,    5,    6,    7,    8  };
 const char* servoLabels[8] = { "R1", "R2", "L1", "L2", "R4", "R3", "L3", "L4" };
-const char* servoDpins[8]  = { "D0", "D3", "D2", "D1", "D8", "D10","D6", "D9" };
+const char* servoDpins[8]  = { "D0", "D1", "D2", "D3", "D4", "D5", "D8", "D9" };
+// Older XIAO + OLED wiring (XIAO_HEAD_LINK=0):
+//const int   servoPins[8]   = {  1,    4,    3,    2,    7,    9,   43,    8  };
+//const char* servoDpins[8]  = { "D0", "D3", "D2", "D1", "D8", "D10","D6", "D9" };
 
 const int CENTER = 90;   // test sweeps around the servo's centre
 const int SWING  = 30;   // +/- degrees - gentle but clearly visible

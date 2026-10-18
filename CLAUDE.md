@@ -16,7 +16,7 @@ The firmware is an Arduino IDE sketch. Requirements (from `firmware/README.md`):
 - Boards: Lolin S2 Mini → "LOLIN S2 Mini"; Distro Board V2/V3 → "ESP32S3 Dev Module"; Distro Board V1 → "ESP32 Dev Module". Use the "Default 4MB with spiffs" partition scheme, and set USB CDC On Boot to Enabled on S2/S3 boards.
 - Arduino requires the sketch to sit in a folder with the same name as the `.ino`. To build, copy `sesame-firmware-main.ino` and all three `.h` files into a `sesame-firmware-main/` folder.
 
-`arduino-cli` is not installed here. If it is installed later, a compile-only check would look like this (the FQBN depends on the target board):
+For a compile-only check with `arduino-cli` (the FQBN depends on the target board; the XIAO is `esp32:esp32:XIAO_ESP32S3`):
 ```
 arduino-cli compile --fqbn esp32:esp32:lolin_s2_mini <path>/sesame-firmware-main
 ```
@@ -25,7 +25,7 @@ The Serial Monitor runs at 115200 baud.
 
 ## Board selection is done by commenting code
 
-The target board is chosen in `sesame-firmware-main.ino`, not by a build flag. Near the top of the file there are commented-out blocks of `I2C_SDA`/`I2C_SCL` defines and `servoPins[8]` arrays for S2 Mini, Distro V1, V2 and V3. Exactly one block of each must be active. The checked-in default is **Lolin S2 Mini**. Don't change the active board unless asked. The exception is the **Seeed XIAO ESP32-S3**: it is auto-detected through `#if defined(ARDUINO_XIAO_ESP32S3)` (board "XIAO_ESP32S3"), and the commented blocks sit in its `#else`. Its own wiring checker is `firmware/debugging-firmware/xiao-mapping-tester/`. The pin tables are in `firmware/README.md` under "Hardware Abstraction Layer".
+The target board is chosen in `sesame-firmware-main.ino`, not by a build flag. Near the top of the file there are commented-out blocks of `I2C_SDA`/`I2C_SCL` defines and `servoPins[8]` arrays for S2 Mini, Distro V1, V2 and V3. Exactly one block of each must be active. The checked-in default is **Lolin S2 Mini**. Don't change the active board unless asked. The exception is the **Seeed XIAO ESP32-S3**: it is auto-detected through `#if defined(ARDUINO_XIAO_ESP32S3)` (board "XIAO_ESP32S3"), and the commented blocks sit in its `#else`. Its own wiring checker is `firmware/debugging-firmware/xiao-mapping-tester/`. On the XIAO, `XIAO_HEAD_LINK` (default 1) drops the OLED, uses servoPins `{1..8}` and talks to a separate head board over UART1 on D6/D7 (`F:<face>,<mode>` out, `C:<command>` in, via `notifyHeadFace()`/`pollHeadLink()`); `-DXIAO_HEAD_LINK=0` restores the XIAO + OLED build. `HAS_OLED` guards every `display` use. The pin tables are in `firmware/README.md` under "Hardware Abstraction Layer".
 
 The same file also sets network mode at compile time with `ENABLE_NETWORK_MODE`, `NETWORK_SSID` and `NETWORK_PASS`. Keep these empty/false in commits. The AP SSID in the code is `Sesame-Controller`, although the docs say `Sesame-Controller-BETA`.
 

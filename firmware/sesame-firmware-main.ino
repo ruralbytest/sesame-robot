@@ -1,11 +1,33 @@
+// --- XIAO head link ---
+// On the Seeed XIAO ESP32-S3 the face lives on a separate head board
+// (Waveshare ESP32-S3-Touch-AMOLED-1.43C), reached over UART on D6/D7,
+// instead of an SSD1306 OLED. The body sends "F:<face>,<mode>" lines and
+// accepts "C:<command>" lines back. Build with -DXIAO_HEAD_LINK=0 (or change
+// the 1 below) to keep the older XIAO + OLED wiring and pin map.
+#if defined(ARDUINO_XIAO_ESP32S3) && !defined(XIAO_HEAD_LINK)
+#define XIAO_HEAD_LINK 1
+#endif
+#if defined(ARDUINO_XIAO_ESP32S3) && XIAO_HEAD_LINK
+#define HAS_HEAD_LINK 1
+#define HAS_OLED 0
+#define HEAD_RX_PIN 44   // D7, from the head's TXD (GPIO43)
+#define HEAD_TX_PIN 43   // D6, to the head's RXD (GPIO44)
+#define HEAD_BAUD 115200
+#else
+#define HAS_HEAD_LINK 0
+#define HAS_OLED 1
+#endif
+
 #include <WiFi.h>
 #include <WebServer.h>
 #include <DNSServer.h>
 #include <ESPmDNS.h>
-#include <Wire.h>
 #include <ESP32Servo.h>
+#if HAS_OLED
+#include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#endif
 #include "face-bitmaps.h"
 #include "movement-sequences.h"
 #include "captive-portal.h"
@@ -50,7 +72,9 @@
 DNSServer dnsServer;
 const byte DNS_PORT = 53;
 
+#if HAS_OLED
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+#endif
 WebServer server(80);
 
 // Global state for animations
@@ -103,10 +127,18 @@ const uint32_t WIFI_SETUP_START_DELAY_MS = 300;  // let the HTTP response flush 
 // If you are using a different board, please adjust the servoPins array accordingly.
 // ======================================================================
 Servo servos[8];
-#if defined(ARDUINO_XIAO_ESP32S3)
-// Seeed Studio XIAO ESP32-S3 - all 8 servos run on LEDC hardware PWM via
-// ESP32Servo (the S3 has 8 LEDC channels). Pins match the as-built wiring.
-// OLED I2C is on D4/D5; D7 is free.
+#if defined(ARDUINO_XIAO_ESP32S3) && HAS_HEAD_LINK
+// Seeed Studio XIAO ESP32-S3 with the round head board - all 8 servos run on
+// LEDC hardware PWM via ESP32Servo. Hips on D0-D3, knees on D4/D5/D8/D9, in
+// servo-index order, so the GPIOs run 1 to 8. D6/D7 carry the head link;
+// no servo sits on a boot-log pin. D10 (GPIO9) is spare.
+//   R1=D0  R2=D1  L1=D2  L2=D3  R4=D4  R3=D5  L3=D8  L4=D9
+const int servoPins[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+#elif defined(ARDUINO_XIAO_ESP32S3)
+// Seeed Studio XIAO ESP32-S3 with the SSD1306 OLED (XIAO_HEAD_LINK=0) - all
+// 8 servos run on LEDC hardware PWM via ESP32Servo (the S3 has 8 LEDC
+// channels). Pins match the older as-built wiring. OLED I2C is on D4/D5;
+// D7 is free.
 // L3 is on D6 (GPIO43, the UART0 boot-log pin) -> brief harmless twitch on
 // reset; move L3 to the free D7 (GPIO44) and update this array to avoid it.
 //   R1=D0  R2=D3  L1=D2  L2=D1  R4=D8  R3=D10  L3=D6  L4=D9
@@ -238,6 +270,98 @@ void setApOnlyInfoText();
 void showWifiInfoNow();
 void updateWifiSetup();
 void finishWifiSetup(const String& err);
+void pollHeadLink();
+void updateHeadLink();
+void notifyHeadFace();
+
+// ====== HEAD LINK ======
+// One text line per message, ending in '\n'. Body -> head: "F:<face>,<mode>"
+// (mode = loop | once | boomerang). Head -> body: "C:<command>", the same
+// names as /cmd?pose= and /cmd?go=, plus "C:stop". Anything else (such as
+// the head's boot log, which comes out on the same pins) is ignored.
+// All traffic goes through sendToHead() and pollHeadLink(), so the link can
+// later be swapped for ESP-NOW by changing only those two functions.
+#if HAS_HEAD_LINK
+String lastHeadFaceLine = "";
+unsigned long lastHeadFaceSentMs = 0;
+const unsigned long HEAD_FACE_RESEND_MS = 3000;  // re-sync a head that rebooted or was plugged in late
+
+void sendToHead(const String& line) {
+  Serial1.print(line);
+  Serial1.print('\n');
+}
+
+const char* faceModeName(FaceAnimMode mode) {
+  if (mode == FACE_ANIM_ONCE) return "once";
+  if (mode == FACE_ANIM_BOOMERANG) return "boomerang";
+  return "loop";
+}
+
+String headFaceLine() {
+  return "F:" + currentFaceName + "," + faceModeName(currentFaceMode);
+}
+
+// Called whenever the face or its mode may have changed. Sends only on change;
+// updateHeadLink() repeats the last line now and then, so the head must treat
+// a repeat of the face it is already showing as a no-op.
+void notifyHeadFace() {
+  String line = headFaceLine();
+  if (line == lastHeadFaceLine) return;
+  lastHeadFaceLine = line;
+  lastHeadFaceSentMs = millis();
+  sendToHead(line);
+}
+
+void updateHeadLink() {
+  if (lastHeadFaceLine.length() > 0 && millis() - lastHeadFaceSentMs >= HEAD_FACE_RESEND_MS) {
+    lastHeadFaceSentMs = millis();
+    sendToHead(lastHeadFaceLine);
+  }
+}
+
+void handleHeadLine(const char* line) {
+  if (strncmp(line, "C:", 2) != 0) return;  // boot log or noise
+  String cmd = String(line + 2);
+  cmd.trim();
+  if (cmd.length() == 0) return;
+  Serial.print("Head command: ");
+  Serial.println(cmd);
+  recordInput();
+  if (cmd == "stop") {
+    currentCommand = "";
+  } else {
+    currentCommand = cmd;
+    exitIdle();
+  }
+}
+
+// Non-blocking: reads whatever bytes have arrived. Called from loop() and from
+// the animation wait loops, so a tap on the head can interrupt a running pose.
+void pollHeadLink() {
+  static char buf[48];
+  static uint8_t len = 0;
+  static bool overflow = false;
+  while (Serial1.available()) {
+    char c = Serial1.read();
+    if (c == '\n' || c == '\r') {
+      if (len > 0 && !overflow) {
+        buf[len] = '\0';
+        handleHeadLine(buf);
+      }
+      len = 0;
+      overflow = false;
+    } else if (len < sizeof(buf) - 1) {
+      buf[len++] = c;
+    } else {
+      overflow = true;  // drop the rest of an over-long line
+    }
+  }
+}
+#else
+void pollHeadLink() {}
+void updateHeadLink() {}
+void notifyHeadFace() {}
+#endif
 
 void handleRoot() {
   server.send(200, "text/html", index_html);
@@ -667,7 +791,13 @@ void handleNotFound() {
 void setup() {
   Serial.begin(115200);
   randomSeed(micros());
-  
+
+#if HAS_HEAD_LINK
+  // Link to the head board. The robot runs fine with no head attached.
+  Serial1.begin(HEAD_BAUD, SERIAL_8N1, HEAD_RX_PIN, HEAD_TX_PIN);
+#endif
+
+#if HAS_OLED
   // I2C Init for ESP32
   Wire.begin(I2C_SDA, I2C_SCL);
 
@@ -676,13 +806,14 @@ void setup() {
     Serial.println(F("SSD1306 allocation failed."));
     while (1);
   }
-  
+
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
   display.setTextSize(1);
   display.setCursor(0,0);
   display.println(F("Setting up WiFi..."));
   display.display();
+#endif
 
   // --- WIFI CONFIGURATION ---
   // Don't write credentials to NVS flash: runtime WiFi setup is session-only
@@ -771,9 +902,11 @@ void loop() {
   
   server.handleClient();
   updateWifiSetup();
+  pollHeadLink();
   updateAnimatedFace();
   updateIdleBlink();
   updateWifiInfoScroll();
+  updateHeadLink();
 
   if (currentCommand != "") {
     String cmd = currentCommand;
@@ -900,10 +1033,17 @@ void loop() {
 }
 
 // Function to update the robot's face
+// With the head link, the head draws and animates the faces itself. The body
+// still steps through the frames (without drawing) so ONCE-mode timing, such
+// as the idle blink, finishes at the same moment on both boards.
 void updateFaceBitmap(const unsigned char* bitmap) {
+#if HAS_OLED
   display.clearDisplay();
   display.drawBitmap(0, 0, bitmap, 128, 64, SSD1306_WHITE);
   display.display();
+#else
+  (void)bitmap;
+#endif
 }
 
 uint8_t countFrames(const unsigned char* const* frames, uint8_t maxFrames) {
@@ -917,7 +1057,10 @@ uint8_t countFrames(const unsigned char* const* frames, uint8_t maxFrames) {
 }
 
 void setFace(const String& faceName) {
-  if (faceName == currentFaceName && currentFaceFrames != nullptr) return;
+  if (faceName == currentFaceName && currentFaceFrames != nullptr) {
+    notifyHeadFace();  // same face, but setFaceWithMode() may have changed the mode
+    return;
+  }
 
   currentFaceName = faceName;
   currentFaceFrameIndex = 0;
@@ -947,6 +1090,7 @@ void setFace(const String& faceName) {
   if (currentFaceFrameCount > 0 && currentFaceFrames[0] != nullptr) {
     updateFaceBitmap(currentFaceFrames[0]);
   }
+  notifyHeadFace();
 }
 
 void setFaceMode(FaceAnimMode mode) {
@@ -1014,6 +1158,7 @@ void delayWithFace(unsigned long ms) {
     updateAnimatedFace();
     server.handleClient();
     dnsServer.processNextRequest();
+    pollHeadLink();
     delay(5);
   }
 }
@@ -1077,6 +1222,7 @@ bool pressingCheck(String cmd, int ms) {
   while (millis() - start < ms) {
     server.handleClient();
     dnsServer.processNextRequest();
+    pollHeadLink();
     updateAnimatedFace();
     if (currentCommand != cmd) {
       runStandPose(1);
@@ -1096,6 +1242,9 @@ void recordInput() {
 }
 
 void updateWifiInfoScroll() {
+#if !HAS_OLED
+  return;  // no screen on the body; the WiFi details are on the Serial Monitor
+#else
   // Don't show WiFi info if first input has been received
   if (firstInputReceived) {
     if (showingWifiInfo) {
@@ -1150,4 +1299,5 @@ void updateWifiInfoScroll() {
       wifiScrollPos = 0;
     }
   }
+#endif
 }

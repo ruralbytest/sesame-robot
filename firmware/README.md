@@ -784,7 +784,39 @@ The firmware abstracts pin definitions via the `servoPins` array. The default co
 
 #### Seeed Studio XIAO ESP32-S3 (ESP32-S3)
 
-On the XIAO ESP32-S3 the configuration is auto-detected (`ARDUINO_XIAO_ESP32S3`) — there is no comment/uncomment step. All 8 servos run on LEDC hardware PWM via `ESP32Servo`. The pin labels below are the silkscreened `D` numbers on the XIAO header and match the reference as-built wiring.
+On the XIAO ESP32-S3 the configuration is auto-detected (`ARDUINO_XIAO_ESP32S3`) — there is no comment/uncomment step. All 8 servos run on LEDC hardware PWM via `ESP32Servo`. The pin labels below are the silkscreened `D` numbers on the XIAO header.
+
+There are two XIAO wirings. The default is the **head link**: the face moves to a separate round head board (Waveshare ESP32-S3-Touch-AMOLED-1.43C) and the XIAO has no OLED. Build with `-DXIAO_HEAD_LINK=0` (or set `XIAO_HEAD_LINK` to 0 at the top of the sketch) for the older XIAO + SSD1306 wiring further down.
+
+##### Head link wiring (default)
+
+| Motor/Component | Array Index | XIAO Pin | GPIO Pin | Notes                                 |
+| --------------- | ----------- | -------- | -------- | ------------------------------------- |
+| Motor 0         | 0           | D0       | 1        | R1                                    |
+| Motor 1         | 1           | D1       | 2        | R2                                    |
+| Motor 2         | 2           | D2       | 3        | L1                                    |
+| Motor 3         | 3           | D3       | 4        | L2                                    |
+| Motor 4         | 4           | D4       | 5        | R4                                    |
+| Motor 5         | 5           | D5       | 6        | R3                                    |
+| Motor 6         | 6           | D8       | 7        | L3                                    |
+| Motor 7         | 7           | D9       | 8        | L4                                    |
+| **Head TX**     | -           | **D6**   | **43**   | To the head's RXD pad (GPIO44)        |
+| **Head RX**     | -           | **D7**   | **44**   | From the head's TXD pad (GPIO43)      |
+| GND             | -           | GND      | -        | Shared with the head and both 5 V converters |
+
+D10 (GPIO9) is spare. No servo sits on a boot-log pin, so nothing twitches at reset.
+
+The link is UART1 at 115200 baud, one text line per message:
+
+| Direction    | Message            | Meaning                                                         |
+| ------------ | ------------------ | --------------------------------------------------------------- |
+| Body → head  | `F:<face>,<mode>`  | Show a face from `face-bitmaps.h`; mode is `loop`, `once` or `boomerang` |
+| Head → body  | `C:<command>`      | Run a command, the same names as `/cmd?pose=` / `/cmd?go=`      |
+| Head → body  | `C:stop`           | Stop the current movement                                       |
+
+The body sends `F:` lines only when the face or mode changes, and repeats the last one every 3 seconds so a head that rebooted catches up. The head should ignore a repeat of the face it is already showing. Both boards ignore any line that doesn't start with `F:` or `C:`, because each board's boot log comes out on the same pins. The body never waits for the head, so the robot still walks with the head unplugged. Keep **USB CDC On Boot** enabled; the link uses UART1 on the pins that UART0 would otherwise own.
+
+##### Older XIAO + OLED wiring (`XIAO_HEAD_LINK=0`)
 
 | Motor/Component | Array Index | XIAO Pin | GPIO Pin | Notes                        |
 | --------------- | ----------- | -------- | -------- | ---------------------------- |
@@ -799,7 +831,7 @@ On the XIAO ESP32-S3 the configuration is auto-detected (`ARDUINO_XIAO_ESP32S3`)
 | **I2C SDA**     | -           | **D4**   | **5**    | SSD1306 Data (Hardware I2C)  |
 | **I2C SCL**     | -           | **D5**   | **6**    | SSD1306 Clock (Hardware I2C) |
 
-D7 is the only unused GPIO. To verify the wiring one servo at a time, flash [debugging-firmware/xiao-mapping-tester](debugging-firmware/xiao-mapping-tester/xiao-mapping-tester.ino).
+D7 is the only unused GPIO. To verify either wiring one servo at a time (the tester defaults to the head-link map), flash [debugging-firmware/xiao-mapping-tester](debugging-firmware/xiao-mapping-tester/xiao-mapping-tester.ino).
 
 > [!NOTE]
 > L3 is on D6 (GPIO43), the ESP32-S3 UART0 TX / boot-log pin — expect a brief,
