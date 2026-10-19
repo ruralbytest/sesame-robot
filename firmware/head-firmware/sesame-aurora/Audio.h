@@ -8,6 +8,7 @@ extern std::atomic<float> micLevel;
 extern std::atomic<uint32_t> audioBlocks, audioErrors, soundUntil;
 extern bool micReady, speakerReady;
 extern std::atomic<bool> soundEnabled;
+extern std::atomic<bool> ampOn; // speaker amplifier powered (off between sounds)
 // Sound ids: the three original pet calls, then one per mood, then one per body move.
 enum SoundId { SND_CHIRP, SND_AFFECTION, SND_PURR, SND_MOOD_FIRST,
                SND_MOVE_FIRST=SND_MOOD_FIRST+MOOD_COUNT, SND_COUNT=SND_MOVE_FIRST+MOVE_COUNT };

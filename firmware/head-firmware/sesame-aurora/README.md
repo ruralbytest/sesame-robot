@@ -14,7 +14,7 @@ Three original procedural characters for the Waveshare ESP32-S3-Touch-AMOLED-1.4
 - Make a sound near the microphones: the halo responds; louder sounds can trigger a surprised reaction and chirp. A cooldown suppresses repeated responses to its own speaker. Surprise reactions are paused while the body moves, so servo noise does not trigger them; microphone reactions can also be disabled.
 - Connect a phone to **Sesame-Aurora**, password **Sesame2026**. Open **http://192.168.4.1/**. This Wi-Fi network has no internet. Choose to remain connected if your phone asks.
 
-The control page offers characters, moods, showcase, body-follow mode, speaker mute, microphone-reaction toggle and a **Touch moves body** switch (on at boot; turn it off for carrying or demos). Manual moods last 10 seconds. Local tap/sound reactions temporarily overlay the current body expression. Showcase runs until stopped. Settings reset on reboot.
+The control page offers characters, moods, showcase, body-follow mode, speaker mute, microphone-reaction toggle and a **Touch moves body** switch (on at boot; turn it off for carrying or demos). Manual moods last 10 seconds. Local tap/sound reactions temporarily overlay the current body expression. Showcase runs until stopped. Settings reset on reboot, except **Battery fitted** and the **Wi-Fi auto-off** time, which are saved.
 
 ## Existing body link
 
@@ -40,12 +40,11 @@ The control page and the `?` status show the voltage, the lowest voltage since b
 
 Buttons: **PWR** turns the board on (short press) and off (long press) when it runs on battery. **BOOT** toggles the showcase while running; held while pressing PWR or plugging in USB, it enters upload mode.
 
-## Power savers (planned, not built yet)
+## Power savers
 
-The head now runs on USB or body power, so these wait until a battery goes back in. Both are from the October 2026 review.
+The speaker amplifier (PA, GPIO46) is switched off between sounds, which saves power and removes background hiss. It switches on with about 30 ms of silence before each sound, so the start isn't clipped, and switches off half a second after the sound ends. The `amp` field in `?` shows its state.
 
-- **Wi-Fi off when unused.** The access point stays on all the time (`initWeb()`, with `WiFi.setSleep(false)`). It is the biggest power draw and likely why the battery drained fast. Plan: if no phone has connected within 10 minutes of starting, turn the access point off (`WiFi.softAPdisconnect(true)` and `WiFi.mode(WIFI_OFF)`). Restarting the head brings it back. This also frees roughly 50 KB of internal RAM.
-- **Speaker amplifier off when silent.** `audioTask()` writes silence to the speaker all the time, so the amplifier (PA, GPIO46) never switches off. Plan: mute the codec or switch the PA off once `soundUntil` has passed, and back on just before the next sound. This saves power and removes any background hiss.
+Wi-Fi is the head's biggest power draw. The control page's **Wi-Fi** section can turn it off after 5, 10, 15, 30 or 60 minutes with no phone connected (default: never). A connected phone keeps it on, and the countdown restarts when the last phone leaves. The setting is saved in flash. Restarting the head turns Wi-Fi back on; so does `WIFI:ON` over USB. `?` shows `wifi` (on/off), `wifiOff` (minutes, 0 = never) and `phones` (connected phones).
 
 Not worth changing: re-sending the brightness every 2 s and reading the battery voltage without a battery each cost almost nothing.
 
@@ -68,11 +67,12 @@ The startup order retains the tested clear-before-display-on fix. The original o
 
 ## Serial diagnostics (115200, newline)
 
-- `?`: JSON status, measured fps, UART counters, microphone level, audio errors, touch count, `bodyControl`, `commandsSent`, battery (`batteryMv`, `batteryLowestMv`, `battery` %, `charging`), `startReason`, `brownouts` and `uptime` (seconds).
+- `?`: JSON status, measured fps, UART counters, microphone level, audio errors, speaker amplifier on/off (`amp`), touch count, `bodyControl`, `commandsSent`, battery (`batteryMv`, `batteryLowestMv`, `battery` %, `charging`), `startReason`, `brownouts` and `uptime` (seconds).
 - `F:happy`: show a mood for 10 seconds without moving the body.
 - `M:crab`: show a body move's expression and play its sound for 10 seconds without moving the body.
 - `PET:0`, `PET:1`, `PET:2`: lion, puppy, robot.
 - `BODY:1` / `BODY:0`: let touch move the body, or keep touch on the head only.
+- `WIFIOFF:0|5|10|15|30|60`: Wi-Fi auto-off time in minutes (0 = never), saved. `WIFI:ON`: turn Wi-Fi back on after it switched off.
 - `SHOW` / `FOLLOW`: showcase / body mode.
 - `CHIRP`: play the greeting sound.
 - `SNAP`: binary framebuffer export, ASCII `SNAP 434312\n` followed by 434312 little-endian RGB565 bytes. Use a binary reader, not a text monitor.

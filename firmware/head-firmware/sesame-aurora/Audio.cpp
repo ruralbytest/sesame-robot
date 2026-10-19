@@ -11,6 +11,14 @@ static QueueHandle_t notes=nullptr;
 std::atomic<float> micLevel{0};
 std::atomic<uint32_t> audioBlocks{0},audioErrors{0},soundUntil{0};
 std::atomic<bool> soundEnabled{true};
+// The amplifier (PA) is switched off between sounds to save power and avoid
+// hiss. It gets a short silent lead-in after switching on so the start of a
+// sound isn't clipped, and stays on briefly afterwards so the tail plays out.
+std::atomic<bool> ampOn{false};
+static constexpr gpio_num_t PA_PIN=GPIO_NUM_46;
+static constexpr int AMP_WARMUP_BLOCKS=2;     // 2 x 16 ms of silence after switching on
+static constexpr uint32_t AMP_OFF_AFTER_MS=500;
+static void setAmp(bool on){gpio_set_level(PA_PIN,on);ampOn.store(on);}
 // Volume 0..100 maps to -50..0 dB in the codec; 100 = full DAC level.
 // Raise CHIRP_AMPLITUDE/SPEAKER_VOLUME together if calls are still too quiet.
 static constexpr int SPEAKER_VOLUME=100;
@@ -66,13 +74,16 @@ void playSound(int id){if(notes&&speakerReady&&soundEnabled.load()&&id>=0&&id<SN
 
 static void audioTask(void*) {
   int16_t in[512],out[512]; // 256 stereo samples: 16 ms at 16 kHz
-  int sound=-1,tone=0,pos=0,len=0;float phase=0;
+  int sound=-1,tone=0,pos=0,len=0,warmup=0;float phase=0;uint32_t quietSince=millis();
+  if(speakerReady)setAmp(false); // the codec switched it on when it opened
   for(;;){
     int request=0;
     if(xQueueReceive(notes,&request,0)==pdTRUE){
       sound=request;tone=0;pos=0;len=sounds[sound].tones[0].ms*16;
-      soundUntil.store(millis()+soundMs(sound)+350);
+      if(!ampOn.load()){setAmp(true);warmup=AMP_WARMUP_BLOCKS;}
+      soundUntil.store(millis()+warmup*16+soundMs(sound)+350);
     }
+    if(!soundEnabled.load())sound=-1; // muted mid-sound: drop it so the amp can switch off
     if(micReady){
       if(esp_codec_dev_read(microphone,in,sizeof(in))==ESP_OK){
         // Remove DC separately for both channels; use the louder microphone.
@@ -85,7 +96,7 @@ static void audioTask(void*) {
     }
     for(int i=0;i<256;i++){
       float sample=0;
-      if(sound>=0 && soundEnabled.load()){
+      if(sound>=0 && soundEnabled.load() && !warmup){
         const Tone& k=sounds[sound].tones[tone];
         if(k.f0){
           float t=pos/16000.f,u=pos/(float)len;
@@ -104,6 +115,9 @@ static void audioTask(void*) {
       }
       out[i*2]=out[i*2+1]=(int16_t)sample;
     }
+    if(warmup)warmup--;
+    if(sound>=0)quietSince=millis();
+    else if(ampOn.load()&&millis()-quietSince>AMP_OFF_AFTER_MS)setAmp(false);
     if(speakerReady){if(esp_codec_dev_write(speaker,out,sizeof(out))!=ESP_OK){audioErrors.fetch_add(1);vTaskDelay(pdMS_TO_TICKS(10));}}
     if(!micReady&&!speakerReady)vTaskDelay(pdMS_TO_TICKS(30));
   }

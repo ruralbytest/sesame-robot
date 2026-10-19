@@ -60,6 +60,14 @@ static bool charging=false,usbPlugged=false,voltageRising=false;
 // same as a full battery. So the owner says whether one is fitted (saved).
 static bool batteryFitted=false;
 static void saveBatteryFitted(bool on){batteryFitted=on;Preferences prefs;prefs.begin("aurora",false);prefs.putBool("battery",on);prefs.end();}
+// Wi-Fi auto-off: after this many minutes with no phone connected, the access
+// point turns off to save power (0 = never). Saved; a restart turns it back on.
+static uint16_t wifiOffMinutes=0;
+static uint32_t noPhoneSince=0;
+static bool wifiOn=false;
+static void startWifi();
+static bool validWifiOff(int m){return m==0||m==5||m==10||m==15||m==30||m==60;}
+static void saveWifiOff(int m){wifiOffMinutes=m;noPhoneSince=millis();Preferences prefs;prefs.begin("aurora",false);prefs.putUShort("wifiOff",m);prefs.end();}
 // The cold-start workaround restarts the chip, which hides why it really
 // started. Keep the first reason across that restart, in RTC memory.
 RTC_NOINIT_ATTR static uint32_t savedResetReason,savedResetMagic;
@@ -209,8 +217,8 @@ static void sendBody(const char* cmd){
   Serial.printf("To body: C:%s\n",cmd);
 }
 static String status(){
-  char b[900];snprintf(b,sizeof(b),"{\"mood\":\"%s\",\"move\":\"%s\",\"character\":%d,\"fps\":%.1f,\"energy\":%.3f,\"rawMic\":%.5f,\"mic\":%s,\"speaker\":%s,\"touch\":%s,\"link\":%s,\"bodyLines\":%lu,\"uartBytes\":%lu,\"touches\":%lu,\"reactions\":%lu,\"audioBlocks\":%lu,\"audioErrors\":%lu,\"sound\":%s,\"react\":%s,\"show\":%s,\"bodyControl\":%s,\"commandsSent\":%lu,\"batteryMv\":%d,\"batteryLowestMv\":%d,\"battery\":%d,\"charging\":%s,\"batteryFitted\":%s,\"startReason\":\"%s\",\"brownouts\":%lu,\"uptime\":%lu,\"heap\":%u}",
-    moodName(scene.mood),scene.move!=NO_MOVE?moveLabel(scene.move):"",scene.character,framesPerSecond,energy,micLevel.load(),micReady?"true":"false",speakerReady?"true":"false",touchReady?"true":"false",bodyLinked()?"true":"false",(unsigned long)bodyLines,(unsigned long)uartBytes,(unsigned long)touchCount,(unsigned long)soundReactions,(unsigned long)audioBlocks.load(),(unsigned long)audioErrors.load(),soundEnabled?"true":"false",reactEnabled?"true":"false",showcase?"true":"false",bodyControl?"true":"false",(unsigned long)commandsSent,(int)batteryMv,batteryLowestMv,batteryPercent,charging?"true":"false",batteryFitted?"true":"false",resetName(startReason),(unsigned long)brownouts,(unsigned long)(millis()/1000),ESP.getFreeHeap());
+  char b[1024];snprintf(b,sizeof(b),"{\"wifi\":%s,\"wifiOff\":%u,\"phones\":%d,\"mood\":\"%s\",\"move\":\"%s\",\"character\":%d,\"fps\":%.1f,\"energy\":%.3f,\"rawMic\":%.5f,\"mic\":%s,\"speaker\":%s,\"amp\":%s,\"touch\":%s,\"link\":%s,\"bodyLines\":%lu,\"uartBytes\":%lu,\"touches\":%lu,\"reactions\":%lu,\"audioBlocks\":%lu,\"audioErrors\":%lu,\"sound\":%s,\"react\":%s,\"show\":%s,\"bodyControl\":%s,\"commandsSent\":%lu,\"batteryMv\":%d,\"batteryLowestMv\":%d,\"battery\":%d,\"charging\":%s,\"batteryFitted\":%s,\"startReason\":\"%s\",\"brownouts\":%lu,\"uptime\":%lu,\"heap\":%u}",
+    wifiOn?"true":"false",wifiOffMinutes,wifiOn?WiFi.softAPgetStationNum():0,moodName(scene.mood),scene.move!=NO_MOVE?moveLabel(scene.move):"",scene.character,framesPerSecond,energy,micLevel.load(),micReady?"true":"false",speakerReady?"true":"false",ampOn.load()?"true":"false",touchReady?"true":"false",bodyLinked()?"true":"false",(unsigned long)bodyLines,(unsigned long)uartBytes,(unsigned long)touchCount,(unsigned long)soundReactions,(unsigned long)audioBlocks.load(),(unsigned long)audioErrors.load(),soundEnabled?"true":"false",reactEnabled?"true":"false",showcase?"true":"false",bodyControl?"true":"false",(unsigned long)commandsSent,(int)batteryMv,batteryLowestMv,batteryPercent,charging?"true":"false",batteryFitted?"true":"false",resetName(startReason),(unsigned long)brownouts,(unsigned long)(millis()/1000),ESP.getFreeHeap());
   return String(b);
 }
 static void bodyMessage(String line,bool fromUsb){
@@ -222,6 +230,8 @@ static void bodyMessage(String line,bool fromUsb){
   if(line=="CHIRP"&&fromUsb){chirp(1);return;}
   if((line=="BATTERY:1"||line=="BATTERY:0")&&fromUsb){saveBatteryFitted(line=="BATTERY:1");Serial.printf("Battery fitted: %s\n",batteryFitted?"yes":"no");return;}
   if((line=="BODY:1"||line=="BODY:0")&&fromUsb){bodyControl=line=="BODY:1";Serial.printf("Body control %s\n",bodyControl?"on":"off");return;}
+  if(line=="WIFI:ON"&&fromUsb){if(!wifiOn)startWifi();return;}
+  if(line.startsWith("WIFIOFF:")&&fromUsb){int m=line.substring(8).toInt();if(validWifiOff(m)){saveWifiOff(m);Serial.printf("Wi-Fi auto-off: %d min (0 = never)\n",m);}return;}
   if(line.startsWith("PET:")&&fromUsb){scene.character=constrain(line.substring(4).toInt(),0,2);return;}
   if(line.startsWith("M:")){
     String name=line.substring(2);name.trim();name.toLowerCase();Move m=moveFromName(name.c_str());
@@ -252,8 +262,23 @@ struct Reader{
   void poll(){int budget=256;while(s.available()&&budget--){char c=s.read();if(!usb)uartBytes++;if(c=='\n'||c=='\r'){if(n&&!overflow){b[n]=0;bodyMessage(String(b),usb);}n=0;overflow=false;}else if(n<sizeof(b)-1)b[n++]=c;else overflow=true;}}
 };
 static Reader usb{Serial,true},bodyReader{Serial1,false};
-static void initWeb(){
+static void startWifi(){
   WiFi.mode(WIFI_AP);WiFi.setSleep(false);apReady=WiFi.softAP("Sesame-Aurora","Sesame2026",6,false,2);
+  wifiOn=apReady;noPhoneSince=millis();
+  Serial.printf("WiFi %s: Sesame-Aurora / Sesame2026 / %s\n",apReady?"ready":"failed",WiFi.softAPIP().toString().c_str());
+}
+static void stopWifi(){
+  WiFi.softAPdisconnect(true);WiFi.mode(WIFI_OFF);wifiOn=apReady=false;
+  Serial.printf("WiFi off: no phone for %u min. Restart the head (or send WIFI:ON) to turn it back on.\n",wifiOffMinutes);
+}
+// Called about once a second: a connected phone keeps Wi-Fi on.
+static void updateWifi(){
+  if(!wifiOn)return;
+  if(WiFi.softAPgetStationNum()>0){noPhoneSince=millis();return;}
+  if(wifiOffMinutes&&millis()-noPhoneSince>=wifiOffMinutes*60000UL)stopWifi();
+}
+static void initWeb(){
+  startWifi();
   server.on("/",HTTP_GET,[]{server.send_P(200,"text/html",CONTROL_PAGE);});
   server.on("/status",HTTP_GET,[]{server.sendHeader("Cache-Control","no-store");server.send(200,"application/json",status());});
   server.on("/api",HTTP_POST,[]{
@@ -268,12 +293,13 @@ static void initWeb(){
     else if(a=="react"){reactEnabled=v=="1";reply=reactEnabled?"Sound reactions on":"Sound reactions paused";}
     else if(a=="battery"){saveBatteryFitted(v=="1");reply=batteryFitted?"Battery icon on. Saved.":"No battery: icon hidden. Saved.";}
     else if(a=="body"){bodyControl=v=="1";reply=bodyControl?"Double-tap the head for a trick. Touch it to stop.":"Touch reacts on the head only.";}
+    else if(a=="wifioff"){int m=v.toInt();if(!validWifiOff(m)||(m==0&&v!="0")){server.send(400,"text/plain","Unknown time");return;}
+      saveWifiOff(m);reply=m?"Wi-Fi turns off after "+String(m)+" min with no phone. Saved.":"Wi-Fi stays on. Saved.";}
     else if(a=="chirp"){chirp(1);preview(HAPPY,2000);reply="Hello!";}
     else{server.send(400,"text/plain","Unknown control");return;}
     server.send(200,"text/plain",reply);
   });
   server.onNotFound([]{server.send(404,"text/plain","Open http://192.168.4.1/");});server.begin();
-  Serial.printf("WiFi %s: Sesame-Aurora / Sesame2026 / %s\n",apReady?"ready":"failed",WiFi.softAPIP().toString().c_str());
 }
 static void interactions(){
   static uint32_t lastTouchPoll=0,pressedAt=0,lastSeen=0,lastTapAt=0;static bool down=false,longDone=false,stopTouch=false;
@@ -344,11 +370,12 @@ void auroraSetup(){
     while(millis()<3000)delay(10);Serial.println("Cold start: one warm restart");Serial.flush();esp_restart();
   }
   {Preferences prefs;prefs.begin("aurora",false);brownouts=prefs.getUInt("brownouts",0);batteryFitted=prefs.getBool("battery",false);
+   wifiOffMinutes=prefs.getUShort("wifiOff",0);if(!validWifiOff(wifiOffMinutes))wifiOffMinutes=0;
    if(startReason==ESP_RST_BROWNOUT)prefs.putUInt("brownouts",++brownouts);prefs.end();}
   readBattery();
   Serial.printf("Started by: %s (brownouts so far: %lu). Battery %d mV, %d%%%s\n",resetName(startReason),(unsigned long)brownouts,(int)batteryMv,batteryPercent,charging?", charging":"");
   touchReady=initPeripherals();initWeb();fpsAt=millis();chirp(1);
-  Serial.println("Aurora ready. Tap=love, double-tap=body trick, swipe=pet, hold=calm/stop, BOOT=showcase. USB: ?, SNAP, SHOW, FOLLOW, BODY:0|1, PET:0..2, CHIRP, F:happy, M:crab");
+  Serial.println("Aurora ready. Tap=love, double-tap=body trick, swipe=pet, hold=calm/stop, BOOT=showcase. USB: ?, SNAP, SHOW, FOLLOW, BODY:0|1, WIFI:ON, WIFIOFF:0|5|10|15|30|60, PET:0..2, CHIRP, F:happy, M:crab");
 }
 void auroraLoop(){
   bodyReader.poll();usb.poll();server.handleClient();
@@ -369,6 +396,7 @@ void auroraLoop(){
     }
     scene.linked=lastBody&&now-lastBody<8000;
     static uint32_t batteryAt=0;if(now-batteryAt>=2000){batteryAt=now;readBattery();}
+    static uint32_t wifiAt=0;if(now-wifiAt>=1000){wifiAt=now;updateWifi();}
     scene.batteryPercent=batteryFitted?batteryPercent:-1;scene.charging=charging;
     scene.draw(now/1000.f);showFrame();frames++;
     if(now-fpsAt>=2000){framesPerSecond=frames*1000.f/(now-fpsAt);frames=0;fpsAt=now;}
