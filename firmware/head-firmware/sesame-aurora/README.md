@@ -44,7 +44,7 @@ Buttons: **PWR** turns the board on (short press) and off (long press) when it r
 
 The speaker amplifier (PA, GPIO46) is switched off between sounds, which saves power and removes background hiss. It switches on with about 30 ms of silence before each sound, so the start isn't clipped, and switches off half a second after the sound ends. The `amp` field in `?` shows its state.
 
-Wi-Fi is the head's biggest power draw. The control page's **Wi-Fi** section can turn it off after 1, 3 or 5 minutes with no phone connected (default: never). A connected phone keeps it on, and the countdown restarts when the last phone leaves. The setting is saved in flash. Restarting the head turns Wi-Fi back on; so does `WIFI:ON` over USB. `?` shows `wifi` (on/off), `wifiOff` (minutes, 0 = never) and `phones` (connected phones).
+Wi-Fi is the head's biggest power draw. The control page's **Wi-Fi** section can turn it off after 1, 3 or 5 minutes with no phone connected (default: 1 minute, so connect your phone within a minute of starting the head). A connected phone keeps it on, and the countdown restarts when the last phone leaves. The setting is saved in flash. Restarting the head turns Wi-Fi back on; so does `WIFI:ON` over USB. `?` shows `wifi` (on/off), `wifiOff` (minutes, 0 = never) and `phones` (connected phones).
 
 Not worth changing: re-sending the brightness every 2 s and reading the battery voltage without a battery each cost almost nothing.
 

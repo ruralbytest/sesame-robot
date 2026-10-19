@@ -62,7 +62,8 @@ static bool batteryFitted=false;
 static void saveBatteryFitted(bool on){batteryFitted=on;Preferences prefs;prefs.begin("aurora",false);prefs.putBool("battery",on);prefs.end();}
 // Wi-Fi auto-off: after this many minutes with no phone connected, the access
 // point turns off to save power (0 = never). Saved; a restart turns it back on.
-static uint16_t wifiOffMinutes=0;
+static constexpr uint16_t WIFI_OFF_DEFAULT=1; // minutes, until the owner picks another time
+static uint16_t wifiOffMinutes=WIFI_OFF_DEFAULT;
 static uint32_t noPhoneSince=0;
 static bool wifiOn=false;
 static void startWifi();
@@ -370,7 +371,7 @@ void auroraSetup(){
     while(millis()<3000)delay(10);Serial.println("Cold start: one warm restart");Serial.flush();esp_restart();
   }
   {Preferences prefs;prefs.begin("aurora",false);brownouts=prefs.getUInt("brownouts",0);batteryFitted=prefs.getBool("battery",false);
-   wifiOffMinutes=prefs.getUShort("wifiOff",0);if(!validWifiOff(wifiOffMinutes))wifiOffMinutes=0;
+   wifiOffMinutes=prefs.getUShort("wifiOff",WIFI_OFF_DEFAULT);if(!validWifiOff(wifiOffMinutes))wifiOffMinutes=WIFI_OFF_DEFAULT;
    if(startReason==ESP_RST_BROWNOUT)prefs.putUInt("brownouts",++brownouts);prefs.end();}
   readBattery();
   Serial.printf("Started by: %s (brownouts so far: %lu). Battery %d mV, %d%%%s\n",resetName(startReason),(unsigned long)brownouts,(int)batteryMv,batteryPercent,charging?", charging":"");
