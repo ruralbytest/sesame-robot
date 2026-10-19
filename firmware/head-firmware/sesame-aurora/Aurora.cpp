@@ -29,6 +29,13 @@ static constexpr uint32_t MOVE_HOLD_MS=3000;
 static uint32_t manualUntil=0,nextFrame=0,lastAudioReaction=0,showStart=0;
 static float noiseFloor=.002f,energy=0,framesPerSecond=0;
 static uint32_t frames=0,fpsAt=0;
+// Touch can drive the body: double-tap sends the next trick, hold sends stop,
+// and any touch while the body moves sends stop. Only one-shot poses are used,
+// so the robot never walks off from a touch. Switch off on the web page/USB.
+static bool bodyControl=true;
+static const char* const TRICKS[]={"wave","bow","dance","cute","point","shrug"};
+static uint8_t nextTrick=0;
+static uint32_t commandSentAt=0,commandsSent=0;
 
 static const sh8601_lcd_init_cmd_t initCmds[]={
   {0xFE,(uint8_t[]){0},1,0},{0xC4,(uint8_t[]){0x80},1,0},
@@ -93,9 +100,21 @@ static void startBodyMove(Move m){
 static void endBodyMove(){
   if(bodyMove!=NO_MOVE&&!moveClearAt){uint32_t held=bodyMoveAt+MOVE_HOLD_MS;moveClearAt=isFuture(held)?held:millis();}
 }
+static bool bodyLinked(){return lastBody&&millis()-lastBody<8000;}
+static bool canDriveBody(){return bodyControl&&bodyLinked();}
+// True while the body runs a move, and briefly after we sent one (before its
+// "M:" reply arrives), so a quick second touch still counts as "stop".
+static bool bodyBusy(){
+  return bodyLinked()&&((bodyMove!=NO_MOVE&&!moveClearAt)||(commandSentAt&&millis()-commandSentAt<1500));
+}
+static void sendBody(const char* cmd){
+  Serial1.printf("C:%s\n",cmd);commandsSent++;
+  commandSentAt=strcmp(cmd,"stop")?millis():0;
+  Serial.printf("To body: C:%s\n",cmd);
+}
 static String status(){
-  char b[650];snprintf(b,sizeof(b),"{\"mood\":\"%s\",\"move\":\"%s\",\"character\":%d,\"fps\":%.1f,\"energy\":%.3f,\"rawMic\":%.5f,\"mic\":%s,\"speaker\":%s,\"touch\":%s,\"link\":%s,\"bodyLines\":%lu,\"uartBytes\":%lu,\"touches\":%lu,\"reactions\":%lu,\"audioBlocks\":%lu,\"audioErrors\":%lu,\"sound\":%s,\"react\":%s,\"show\":%s,\"heap\":%u}",
-    moodName(scene.mood),scene.move!=NO_MOVE?moveLabel(scene.move):"",scene.character,framesPerSecond,energy,micLevel.load(),micReady?"true":"false",speakerReady?"true":"false",touchReady?"true":"false",lastBody&&millis()-lastBody<8000?"true":"false",(unsigned long)bodyLines,(unsigned long)uartBytes,(unsigned long)touchCount,(unsigned long)soundReactions,(unsigned long)audioBlocks.load(),(unsigned long)audioErrors.load(),soundEnabled?"true":"false",reactEnabled?"true":"false",showcase?"true":"false",ESP.getFreeHeap());
+  char b[700];snprintf(b,sizeof(b),"{\"mood\":\"%s\",\"move\":\"%s\",\"character\":%d,\"fps\":%.1f,\"energy\":%.3f,\"rawMic\":%.5f,\"mic\":%s,\"speaker\":%s,\"touch\":%s,\"link\":%s,\"bodyLines\":%lu,\"uartBytes\":%lu,\"touches\":%lu,\"reactions\":%lu,\"audioBlocks\":%lu,\"audioErrors\":%lu,\"sound\":%s,\"react\":%s,\"show\":%s,\"bodyControl\":%s,\"commandsSent\":%lu,\"heap\":%u}",
+    moodName(scene.mood),scene.move!=NO_MOVE?moveLabel(scene.move):"",scene.character,framesPerSecond,energy,micLevel.load(),micReady?"true":"false",speakerReady?"true":"false",touchReady?"true":"false",bodyLinked()?"true":"false",(unsigned long)bodyLines,(unsigned long)uartBytes,(unsigned long)touchCount,(unsigned long)soundReactions,(unsigned long)audioBlocks.load(),(unsigned long)audioErrors.load(),soundEnabled?"true":"false",reactEnabled?"true":"false",showcase?"true":"false",bodyControl?"true":"false",(unsigned long)commandsSent,ESP.getFreeHeap());
   return String(b);
 }
 static void bodyMessage(String line,bool fromUsb){
@@ -105,6 +124,7 @@ static void bodyMessage(String line,bool fromUsb){
   if(line=="SHOW"&&fromUsb){showcase=true;showStart=millis();return;}
   if(line=="FOLLOW"&&fromUsb){showcase=false;manualUntil=0;return;}
   if(line=="CHIRP"&&fromUsb){chirp(1);return;}
+  if((line=="BODY:1"||line=="BODY:0")&&fromUsb){bodyControl=line=="BODY:1";Serial.printf("Body control %s\n",bodyControl?"on":"off");return;}
   if(line.startsWith("PET:")&&fromUsb){scene.character=constrain(line.substring(4).toInt(),0,2);return;}
   if(line.startsWith("M:")){
     String name=line.substring(2);name.trim();name.toLowerCase();Move m=moveFromName(name.c_str());
@@ -152,6 +172,7 @@ static void initWeb(){
     else if(a=="follow"){showcase=false;manualUntil=0;reply="Following the body again.";}
     else if(a=="sound"){soundEnabled.store(v=="1");reply=soundEnabled?"Sound on":"Sound muted";}
     else if(a=="react"){reactEnabled=v=="1";reply=reactEnabled?"Sound reactions on":"Sound reactions paused";}
+    else if(a=="body"){bodyControl=v=="1";reply=bodyControl?"Double-tap the head for a trick. Touch it to stop.":"Touch reacts on the head only.";}
     else if(a=="chirp"){chirp(1);preview(HAPPY,2000);reply="Hello!";}
     else{server.send(400,"text/plain","Unknown control");return;}
     server.send(200,"text/plain",reply);
@@ -160,22 +181,39 @@ static void initWeb(){
   Serial.printf("WiFi %s: Sesame-Aurora / Sesame2026 / %s\n",apReady?"ready":"failed",WiFi.softAPIP().toString().c_str());
 }
 static void interactions(){
-  static uint32_t lastTouchPoll=0,pressedAt=0,lastSeen=0;static bool down=false,longDone=false;
+  static uint32_t lastTouchPoll=0,pressedAt=0,lastSeen=0,lastTapAt=0;static bool down=false,longDone=false,stopTouch=false;
   static int firstX=233,firstY=233,latestX=233,latestY=233;
   uint32_t now=millis();
   if(now-lastTouchPoll>=35){
     lastTouchPoll=now;int x,y;bool pressed=touchReady&&readTouch(x,y);
     if(pressed){
       lastSeen=now;latestX=x;latestY=y;
-      if(!down){down=true;pressedAt=now;firstX=x;firstY=y;longDone=false;touchCount++;}
+      if(!down){
+        down=true;pressedAt=now;firstX=x;firstY=y;longDone=false;touchCount++;
+        // A touch while the body moves is an emergency stop and nothing else.
+        stopTouch=bodyControl&&bodyBusy();
+        if(stopTouch){sendBody("stop");lastTapAt=0;preview(CURIOUS,2500);chirp(1);}
+      }
       scene.gazeX+=(constrain((x-233)/14.f,-10.f,10.f)-scene.gazeX)*.25f;
       scene.gazeY+=(constrain((y-233)/22.f,-6.f,6.f)-scene.gazeY)*.25f;
-      if(!longDone&&now-pressedAt>900&&abs(x-firstX)<45&&abs(y-firstY)<45){showcase=!showcase;showStart=now;manualUntil=0;longDone=true;chirp(3);}
+      // Hold still: calm down. Stops the body and ends a showcase.
+      if(!stopTouch&&!longDone&&now-pressedAt>900&&abs(x-firstX)<45&&abs(y-firstY)<45){
+        longDone=true;lastTapAt=0;showcase=false;preview(CURIOUS,2500);chirp(3);
+        if(canDriveBody())sendBody("stop");
+      }
     }else if(down&&now-lastSeen>100){
       down=false;
-      if(!longDone){
-        if(abs(latestX-firstX)>65||abs(latestY-firstY)>65){scene.character=(scene.character+1)%3;chirp(1);}
-        else{preview(LOVE,4500);chirp(2);}
+      if(!longDone&&!stopTouch){
+        if(abs(latestX-firstX)>65||abs(latestY-firstY)>65){scene.character=(scene.character+1)%3;chirp(1);lastTapAt=0;}
+        else if(lastTapAt&&now-lastTapAt<500){
+          // Double-tap: next trick. The first tap already showed love.
+          lastTapAt=0;const char* trick=TRICKS[nextTrick];nextTrick=(nextTrick+1)%(sizeof(TRICKS)/sizeof(TRICKS[0]));
+          showcase=false;
+          // The body's "M:" reply brings the move's expression and sound.
+          if(canDriveBody()){manualUntil=0;sendBody(trick);}
+          else{Move m=moveFromName(trick);previewMove(m,3000);moveSound(m);}
+        }
+        else{lastTapAt=now;preview(LOVE,4500);chirp(2);}
       }
     }
   }
@@ -186,7 +224,8 @@ static void interactions(){
   // mouth keeps the expression's shape instead of popping open.
   float target=isFuture(soundUntil.load())?0:constrain((level-noiseFloor*.8f)*18.f,0.f,1.f);
   energy=energy*.75f+target*.25f;scene.energy=reactEnabled?energy:0;
-  if(reactEnabled&&micReady&&now>8000&&!isFuture(soundUntil.load())&&now-lastAudioReaction>4500&&level>fmaxf(.025f,noiseFloor*3.5f)){
+  // Servo noise is not a surprise: no mic reactions while the body moves.
+  if(reactEnabled&&micReady&&now>8000&&!isFuture(soundUntil.load())&&!bodyBusy()&&now-lastAudioReaction>4500&&level>fmaxf(.025f,noiseFloor*3.5f)){
     lastAudioReaction=now;soundReactions++;preview(SURPRISED,1800);moodSound(SURPRISED);
   }
   static bool bootHeld=false;
@@ -202,7 +241,7 @@ void auroraSetup(){
   // Preserve the known working board-specific cold-start reset workaround.
   if(reason==ESP_RST_POWERON||reason==ESP_RST_BROWNOUT){while(millis()<3000)delay(10);Serial.println("Cold start: one warm restart");Serial.flush();esp_restart();}
   touchReady=initPeripherals();initWeb();fpsAt=millis();chirp(1);
-  Serial.println("Aurora ready. Tap=love, swipe=pet, hold=showcase. USB: ?, SNAP, SHOW, FOLLOW, PET:0..2, CHIRP, F:happy, M:crab");
+  Serial.println("Aurora ready. Tap=love, double-tap=body trick, swipe=pet, hold=calm/stop, BOOT=showcase. USB: ?, SNAP, SHOW, FOLLOW, BODY:0|1, PET:0..2, CHIRP, F:happy, M:crab");
 }
 void auroraLoop(){
   bodyReader.poll();usb.poll();server.handleClient();

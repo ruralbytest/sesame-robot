@@ -6,17 +6,19 @@ Three original procedural characters for the Waveshare ESP32-S3-Touch-AMOLED-1.4
 
 - Power the head over USB. A character appears without the body.
 - Tap the screen: affection and a short synthesized pet call.
+- Double-tap: the body does a trick, cycling wave → bow → dance → cute → point → shrug. Without a linked body (or with body control off) the head only shows that trick's expression and sound.
+- Touch the screen while the body is moving: the body stops. That touch does nothing else.
 - Swipe: cycle lion → puppy → robot.
-- Hold still for about one second: toggle an automatic expression showcase.
-- Short press BOOT while running: also toggles showcase. Do not hold BOOT during power-on unless entering upload mode.
-- Make a sound near the microphones: the halo responds; louder sounds can trigger a surprised reaction and chirp. A cooldown suppresses repeated responses to its own speaker. Servo noise can also trigger it; microphone reactions can be disabled.
+- Hold still for about one second: calm face and purr; the body stops and any showcase ends.
+- Short press BOOT while running: toggles an automatic expression showcase. Do not hold BOOT during power-on unless entering upload mode.
+- Make a sound near the microphones: the halo responds; louder sounds can trigger a surprised reaction and chirp. A cooldown suppresses repeated responses to its own speaker. Surprise reactions are paused while the body moves, so servo noise does not trigger them; microphone reactions can also be disabled.
 - Connect a phone to **Sesame-Aurora**, password **Sesame2026**. Open **http://192.168.4.1/**. This Wi-Fi network has no internet. Choose to remain connected if your phone asks.
 
-The control page offers characters, moods, showcase, body-follow mode, speaker mute and microphone-reaction toggle. Manual moods last 10 seconds. Local tap/sound reactions temporarily overlay the current body expression. Showcase runs until stopped. Settings reset on reboot.
+The control page offers characters, moods, showcase, body-follow mode, speaker mute, microphone-reaction toggle and a **Touch moves body** switch (on at boot; turn it off for carrying or demos). Manual moods last 10 seconds. Local tap/sound reactions temporarily overlay the current body expression. Showcase runs until stopped. Settings reset on reboot.
 
 ## Existing body link
 
-This head listens at 115200 baud on RX GPIO44 for the body's `F:<name>,<loop|once|boomerang>` face lines and `M:<move>` move lines (`M:idle` when the body stops). It does not transmit movement commands to the body.
+This head listens at 115200 baud on RX GPIO44 for the body's `F:<name>,<loop|once|boomerang>` face lines and `M:<move>` move lines (`M:idle` when the body stops). On TX GPIO43 it sends `C:<trick>` for a double-tap and `C:stop` for a hold or a touch during a move, only while body control is on and the body is linked. It never sends walking commands, and all tricks it sends end on their own.
 
 | Body XIAO | Head |
 |---|---|
@@ -47,10 +49,11 @@ The startup order retains the tested clear-before-display-on fix. The original o
 
 ## Serial diagnostics (115200, newline)
 
-- `?`: JSON status, measured fps, UART counters, microphone level, audio errors and touch count.
+- `?`: JSON status, measured fps, UART counters, microphone level, audio errors, touch count, `bodyControl` and `commandsSent`.
 - `F:happy`: show a mood for 10 seconds without moving the body.
 - `M:crab`: show a body move's expression and play its sound for 10 seconds without moving the body.
 - `PET:0`, `PET:1`, `PET:2`: lion, puppy, robot.
+- `BODY:1` / `BODY:0`: let touch move the body, or keep touch on the head only.
 - `SHOW` / `FOLLOW`: showcase / body mode.
 - `CHIRP`: play the greeting sound.
 - `SNAP`: binary framebuffer export, ASCII `SNAP 434312\n` followed by 434312 little-endian RGB565 bytes. Use a binary reader, not a text monitor.
