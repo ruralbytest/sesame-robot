@@ -21,6 +21,11 @@ static bool touchReady=false,showcase=false,reactEnabled=true,apReady=false;
 static uint32_t lastBody=0,bodyLines=0,uartBytes=0,touchCount=0,soundReactions=0;
 static String bodyFace="idle",bodyMode="loop";
 static Mood bodyMood=CURIOUS,manualMood=CURIOUS;
+// Body moves arrive as "M:<command>" lines. A move stays on screen for at
+// least MOVE_HOLD_MS, so one-shot poses like rest or stand are still seen.
+static Move bodyMove=NO_MOVE,manualMove=NO_MOVE;
+static uint32_t bodyMoveAt=0,moveClearAt=0,lastMoveLine=0;
+static constexpr uint32_t MOVE_HOLD_MS=3000;
 static uint32_t manualUntil=0,nextFrame=0,lastAudioReaction=0,showStart=0;
 static float noiseFloor=.002f,energy=0,framesPerSecond=0;
 static uint32_t frames=0,fpsAt=0;
@@ -77,10 +82,20 @@ static Mood faceMood(String s){
   return CURIOUS;
 }
 static bool isFuture(uint32_t deadline){return (int32_t)(deadline-millis())>0;}
-static void preview(Mood m,uint32_t duration=10000){manualMood=m;manualUntil=millis()+duration;}
+static void preview(Mood m,uint32_t duration=10000){manualMood=m;manualMove=NO_MOVE;manualUntil=millis()+duration;}
+static void previewMove(Move m,uint32_t duration=10000){manualMove=m;manualUntil=millis()+duration;}
+static void startBodyMove(Move m){
+  moveClearAt=0;
+  if(m==bodyMove)return; // keepalive repeat
+  bodyMove=m;bodyMoveAt=millis();moveSound(m);
+  Serial.printf("Body move: %s\n",moveLabel(m));
+}
+static void endBodyMove(){
+  if(bodyMove!=NO_MOVE&&!moveClearAt){uint32_t held=bodyMoveAt+MOVE_HOLD_MS;moveClearAt=isFuture(held)?held:millis();}
+}
 static String status(){
-  char b[650];snprintf(b,sizeof(b),"{\"mood\":\"%s\",\"character\":%d,\"fps\":%.1f,\"energy\":%.3f,\"rawMic\":%.5f,\"mic\":%s,\"speaker\":%s,\"touch\":%s,\"link\":%s,\"bodyLines\":%lu,\"uartBytes\":%lu,\"touches\":%lu,\"reactions\":%lu,\"audioBlocks\":%lu,\"audioErrors\":%lu,\"sound\":%s,\"react\":%s,\"show\":%s,\"heap\":%u}",
-    moodName(scene.mood),scene.character,framesPerSecond,energy,micLevel.load(),micReady?"true":"false",speakerReady?"true":"false",touchReady?"true":"false",lastBody&&millis()-lastBody<8000?"true":"false",(unsigned long)bodyLines,(unsigned long)uartBytes,(unsigned long)touchCount,(unsigned long)soundReactions,(unsigned long)audioBlocks.load(),(unsigned long)audioErrors.load(),soundEnabled?"true":"false",reactEnabled?"true":"false",showcase?"true":"false",ESP.getFreeHeap());
+  char b[650];snprintf(b,sizeof(b),"{\"mood\":\"%s\",\"move\":\"%s\",\"character\":%d,\"fps\":%.1f,\"energy\":%.3f,\"rawMic\":%.5f,\"mic\":%s,\"speaker\":%s,\"touch\":%s,\"link\":%s,\"bodyLines\":%lu,\"uartBytes\":%lu,\"touches\":%lu,\"reactions\":%lu,\"audioBlocks\":%lu,\"audioErrors\":%lu,\"sound\":%s,\"react\":%s,\"show\":%s,\"heap\":%u}",
+    moodName(scene.mood),scene.move!=NO_MOVE?moveLabel(scene.move):"",scene.character,framesPerSecond,energy,micLevel.load(),micReady?"true":"false",speakerReady?"true":"false",touchReady?"true":"false",lastBody&&millis()-lastBody<8000?"true":"false",(unsigned long)bodyLines,(unsigned long)uartBytes,(unsigned long)touchCount,(unsigned long)soundReactions,(unsigned long)audioBlocks.load(),(unsigned long)audioErrors.load(),soundEnabled?"true":"false",reactEnabled?"true":"false",showcase?"true":"false",ESP.getFreeHeap());
   return String(b);
 }
 static void bodyMessage(String line,bool fromUsb){
@@ -91,14 +106,29 @@ static void bodyMessage(String line,bool fromUsb){
   if(line=="FOLLOW"&&fromUsb){showcase=false;manualUntil=0;return;}
   if(line=="CHIRP"&&fromUsb){chirp(1);return;}
   if(line.startsWith("PET:")&&fromUsb){scene.character=constrain(line.substring(4).toInt(),0,2);return;}
+  if(line.startsWith("M:")){
+    String name=line.substring(2);name.trim();name.toLowerCase();Move m=moveFromName(name.c_str());
+    if(fromUsb){if(m!=NO_MOVE){showcase=false;previewMove(m);moveSound(m);}return;}
+    lastBody=lastMoveLine=millis();bodyLines++;
+    if(m!=NO_MOVE)startBodyMove(m);else endBodyMove(); // "M:idle" when the body stops
+    return;
+  }
   if(!line.startsWith("F:"))return;
   int comma=line.indexOf(',');String name=line.substring(2,comma<0?line.length():comma);name.trim();name.toLowerCase();
   String mode=comma<0?"loop":line.substring(comma+1);mode.trim();mode.toLowerCase();
   if(!name.length()||(mode!="loop"&&mode!="once"&&mode!="boomerang"))return;
-  if(fromUsb){preview(faceMood(name));return;}
+  if(fromUsb){Mood m=faceMood(name);showcase=false;preview(m);moodSound(m);return;}
   lastBody=millis();bodyLines++;
   if(name!=bodyFace||mode!=bodyMode){
+    Mood previous=bodyMood;
     bodyFace=name;bodyMode=mode;bodyMood=faceMood(name);
+    // A body without "M:" lines (older firmware): read the move from the face.
+    // Its four walking commands all show "walk", so they look the same.
+    bool legacyBody=!lastMoveLine||millis()-lastMoveLine>10000;
+    if(legacyBody){Move m=moveFromName(name.c_str());if(m!=NO_MOVE)startBodyMove(m);else endBodyMove();}
+    // Faces that are not moves (happy, sad, ... sent with "fc") get their mood
+    // sound. Curious is the resting face, so it stays silent.
+    if(bodyMove==NO_MOVE&&bodyMood!=previous&&bodyMood!=CURIOUS)moodSound(bodyMood);
     // Repeated body keepalives do not restart local animations or pet reactions.
     Serial.printf("Body face: %s (%s)\n",name.c_str(),mode.c_str());
   }
@@ -115,7 +145,9 @@ static void initWeb(){
   server.on("/api",HTTP_POST,[]{
     String a=server.arg("action"),v=server.arg("value"),reply="Done";
     if(a=="character"&&(v=="0"||v=="1"||v=="2")){scene.character=v.toInt();chirp(1);reply="New companion, same robot.";}
-    else if(a=="mood"){showcase=false;preview(faceMood(v));chirp(2);reply="Mood set for 10 seconds.";}
+    else if(a=="mood"){showcase=false;Mood m=faceMood(v);preview(m);moodSound(m);reply="Mood set for 10 seconds.";}
+    else if(a=="move"){Move m=moveFromName(v.c_str());if(m==NO_MOVE){server.send(400,"text/plain","Unknown move");return;}
+      showcase=false;previewMove(m);moveSound(m);reply="Showing that move for 10 seconds. The body does not move.";}
     else if(a=="show"){showcase=true;showStart=millis();reply="Showcase is playing. Body motion is unchanged.";}
     else if(a=="follow"){showcase=false;manualUntil=0;reply="Following the body again.";}
     else if(a=="sound"){soundEnabled.store(v=="1");reply=soundEnabled?"Sound on":"Sound muted";}
@@ -150,10 +182,12 @@ static void interactions(){
   if(!down){float gx=sinf(now*.00047f)*7,gy=sinf(now*.00031f)*3;scene.gazeX+=(gx-scene.gazeX)*.06f;scene.gazeY+=(gy-scene.gazeY)*.06f;}
   float level=micLevel.load();
   if(!isFuture(soundUntil.load()))noiseFloor=noiseFloor*.997f+fminf(level,.05f)*.003f;
-  float target=constrain((level-noiseFloor*.8f)*18.f,0.f,1.f);
+  // The mic hears our own speaker; ignore it while a sound plays so the
+  // mouth keeps the expression's shape instead of popping open.
+  float target=isFuture(soundUntil.load())?0:constrain((level-noiseFloor*.8f)*18.f,0.f,1.f);
   energy=energy*.75f+target*.25f;scene.energy=reactEnabled?energy:0;
   if(reactEnabled&&micReady&&now>8000&&!isFuture(soundUntil.load())&&now-lastAudioReaction>4500&&level>fmaxf(.025f,noiseFloor*3.5f)){
-    lastAudioReaction=now;soundReactions++;preview(SURPRISED,1800);chirp(1);
+    lastAudioReaction=now;soundReactions++;preview(SURPRISED,1800);moodSound(SURPRISED);
   }
   static bool bootHeld=false;
   bool boot=digitalRead(0)==LOW;
@@ -168,15 +202,25 @@ void auroraSetup(){
   // Preserve the known working board-specific cold-start reset workaround.
   if(reason==ESP_RST_POWERON||reason==ESP_RST_BROWNOUT){while(millis()<3000)delay(10);Serial.println("Cold start: one warm restart");Serial.flush();esp_restart();}
   touchReady=initPeripherals();initWeb();fpsAt=millis();chirp(1);
-  Serial.println("Aurora ready. Tap=love, swipe=pet, hold=showcase. USB: ?, SNAP, SHOW, FOLLOW, PET:0..2, CHIRP, F:happy");
+  Serial.println("Aurora ready. Tap=love, swipe=pet, hold=showcase. USB: ?, SNAP, SHOW, FOLLOW, PET:0..2, CHIRP, F:happy, M:crab");
 }
 void auroraLoop(){
   bodyReader.poll();usb.poll();server.handleClient();
   uint32_t now=millis();
   if((int32_t)(now-nextFrame)>=0){
     nextFrame=now+50;interactions();
-    if(showcase){static const Mood sequence[]={CURIOUS,HAPPY,LOVE,PARTY,SURPRISED,BRAVE,THINKING,SLEEPY};scene.mood=sequence[((now-showStart)/4500)%8];}
-    else scene.mood=isFuture(manualUntil)?manualMood:bodyMood;
+    if(moveClearAt&&!isFuture(moveClearAt)){bodyMove=NO_MOVE;moveClearAt=0;}
+    static int shownStep=-1;
+    if(showcase){
+      // All 19 body moves, then the 9 moods, 4.5 s each, each with its sound.
+      int step=((now-showStart)/4500)%(MOVE_COUNT+MOOD_COUNT);
+      if(step<MOVE_COUNT){scene.move=(Move)step;}else{scene.move=NO_MOVE;scene.mood=(Mood)(step-MOVE_COUNT);}
+      if(step!=shownStep){shownStep=step;if(scene.move!=NO_MOVE)moveSound(scene.move);else moodSound(scene.mood);}
+    }else{
+      shownStep=-1;
+      bool manual=isFuture(manualUntil);
+      scene.mood=manual?manualMood:bodyMood;scene.move=manual?manualMove:bodyMove;
+    }
     scene.linked=lastBody&&now-lastBody<8000;
     scene.draw(now/1000.f);pushFrame();frames++;
     if(now-fpsAt>=2000){framesPerSecond=frames*1000.f/(now-fpsAt);frames=0;fpsAt=now;}

@@ -273,6 +273,7 @@ void finishWifiSetup(const String& err);
 void pollHeadLink();
 void updateHeadLink();
 void notifyHeadFace();
+void syncHeadMove();
 
 // ====== HEAD LINK ======
 // One text line per message, ending in '\n'. Body -> head: "F:<face>,<mode>"
@@ -312,10 +313,37 @@ void notifyHeadFace() {
   sendToHead(line);
 }
 
+// The move being run, sent as "M:<command>" ("M:idle" when none) so the head
+// can show each move its own way. The face alone can't do that: forward,
+// backward, left and right all use the "walk" face.
+const char* const HEAD_MOVES[] = {
+  "forward", "backward", "left", "right", "rest", "stand", "wave", "dance", "swim", "point",
+  "pushup", "bow", "cute", "freaky", "worm", "shake", "shrug", "dead", "crab"
+};
+const char* lastHeadMove = nullptr;
+
+void sendHeadMove() {
+  Serial1.print("M:");
+  Serial1.print(lastHeadMove);
+  Serial1.print('\n');
+}
+
+// Called from pollHeadLink(), so it also runs during animations.
+void syncHeadMove() {
+  const char* move = "idle";
+  for (const char* m : HEAD_MOVES) {
+    if (currentCommand == m) { move = m; break; }
+  }
+  if (lastHeadMove != nullptr && strcmp(move, lastHeadMove) == 0) return;
+  lastHeadMove = move;
+  sendHeadMove();
+}
+
 void updateHeadLink() {
   if (lastHeadFaceLine.length() > 0 && millis() - lastHeadFaceSentMs >= HEAD_FACE_RESEND_MS) {
     lastHeadFaceSentMs = millis();
     sendToHead(lastHeadFaceLine);
+    if (lastHeadMove != nullptr) sendHeadMove();
   }
 }
 
@@ -338,6 +366,7 @@ void handleHeadLine(const char* line) {
 // Non-blocking: reads whatever bytes have arrived. Called from loop() and from
 // the animation wait loops, so a tap on the head can interrupt a running pose.
 void pollHeadLink() {
+  syncHeadMove();
   static char buf[48];
   static uint8_t len = 0;
   static bool overflow = false;
@@ -361,6 +390,7 @@ void pollHeadLink() {
 void pollHeadLink() {}
 void updateHeadLink() {}
 void notifyHeadFace() {}
+void syncHeadMove() {}
 #endif
 
 void handleRoot() {
@@ -908,6 +938,7 @@ void loop() {
   updateWifiInfoScroll();
   updateHeadLink();
 
+  syncHeadMove();  // tell the head before a one-shot pose clears the command
   if (currentCommand != "") {
     String cmd = currentCommand;
     if (cmd == "forward") runWalkPose();
@@ -945,8 +976,8 @@ void loop() {
         else if(strcmp(command_buffer, "rn wb") == 0) { currentCommand = "backward"; runWalkBackward(); currentCommand = ""; }
         else if(strcmp(command_buffer, "rn tl") == 0) { currentCommand = "left"; runTurnLeft(); currentCommand = ""; }
         else if(strcmp(command_buffer, "rn tr") == 0) { currentCommand = "right"; runTurnRight(); currentCommand = ""; }
-        else if(strcmp(command_buffer, "run rest") == 0 || strcmp(command_buffer, "rn rs") == 0) runRestPose();
-        else if(strcmp(command_buffer, "run stand") == 0 || strcmp(command_buffer, "rn st") == 0) runStandPose(1);
+        else if(strcmp(command_buffer, "run rest") == 0 || strcmp(command_buffer, "rn rs") == 0) { currentCommand = "rest"; syncHeadMove(); runRestPose(); currentCommand = ""; }
+        else if(strcmp(command_buffer, "run stand") == 0 || strcmp(command_buffer, "rn st") == 0) { currentCommand = "stand"; syncHeadMove(); runStandPose(1); currentCommand = ""; }
         else if(strcmp(command_buffer, "rn wv") == 0) { currentCommand = "wave"; runWavePose(); }
         else if(strcmp(command_buffer, "rn dn") == 0) { currentCommand = "dance"; runDancePose(); }
         else if(strcmp(command_buffer, "rn sw") == 0) { currentCommand = "swim"; runSwimPose(); }

@@ -811,10 +811,11 @@ The link is UART1 at 115200 baud, one text line per message:
 | Direction    | Message            | Meaning                                                         |
 | ------------ | ------------------ | --------------------------------------------------------------- |
 | Body → head  | `F:<face>,<mode>`  | Show a face from `face-bitmaps.h`; mode is `loop`, `once` or `boomerang` |
+| Body → head  | `M:<move>`         | The move being run (`forward`, `crab`, ...), or `idle` when none; the four walking commands share the `walk` face, so this tells them apart |
 | Head → body  | `C:<command>`      | Run a command, the same names as `/cmd?pose=` / `/cmd?go=`      |
 | Head → body  | `C:stop`           | Stop the current movement                                       |
 
-The body sends `F:` lines only when the face or mode changes, and repeats the last one every 3 seconds so a head that rebooted catches up. The head should ignore a repeat of the face it is already showing. Both boards ignore any line that doesn't start with `F:` or `C:`, because each board's boot log comes out on the same pins. The body never waits for the head, so the robot still walks with the head unplugged. Keep **USB CDC On Boot** enabled; the link uses UART1 on the pins that UART0 would otherwise own.
+The body sends `F:` lines only when the face or mode changes, and repeats the last one every 3 seconds so a head that rebooted catches up. The head should ignore a repeat of the face it is already showing. `M:` lines are sent when the running command changes and repeated with the face. Both boards ignore any line that doesn't start with `F:`, `M:` or `C:`, because each board's boot log comes out on the same pins. The body never waits for the head, so the robot still walks with the head unplugged. Keep **USB CDC On Boot** enabled; the link uses UART1 on the pins that UART0 would otherwise own.
 
 ##### Older XIAO + OLED wiring (`XIAO_HEAD_LINK=0`)
 

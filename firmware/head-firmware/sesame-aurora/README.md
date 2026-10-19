@@ -16,7 +16,7 @@ The control page offers characters, moods, showcase, body-follow mode, speaker m
 
 ## Existing body link
 
-The body firmware is unchanged. This head listens for the existing `F:<name>,<loop|once|boomerang>` messages at 115200 baud on RX GPIO44. It does not transmit movement commands to the body.
+This head listens at 115200 baud on RX GPIO44 for the body's `F:<name>,<loop|once|boomerang>` face lines and `M:<move>` move lines (`M:idle` when the body stops). It does not transmit movement commands to the body.
 
 | Body XIAO | Head |
 |---|---|
@@ -24,7 +24,9 @@ The body firmware is unchanged. This head listens for the existing `F:<name>,<lo
 | D7 / RX / GPIO44 | TXD / GPIO43 |
 | GND | GND |
 
-Wave/walk/happy → happy; rest/sleepy/dead → sleepy; dance/excited/worm/freaky → party; cute/love/bow → love; angry/pushup/crab → brave; point/confused/thinking/shrug → thinking. Unknown names → curious. The old bitmap animation modes are accepted for protocol compatibility; this renderer animates continuous procedural expressions rather than replaying those bitmap frames. A small teal dot at the bottom means a valid body message arrived within eight seconds; violet means standalone.
+Each of the body's 19 moves has its own expression, badge label and sound: forward (WALK), backward (BACK), left, right, rest, stand (READY), wave (HELLO), dance, swim, point, pushup, bow, cute, freaky, worm, shake, shrug, dead and crab. A move stays on screen for at least 3 seconds. A body without `M:` lines (older firmware) still works from its face names, but its four walking commands then all look like WALK.
+
+Faces that are not moves map to moods, each with its own sound (curious, the resting mood, is silent when it comes from the body): wave/walk/happy → happy; rest/sleepy/dead → sleepy; dance/excited/worm/freaky → party; cute/love/bow → love; angry/pushup/crab → brave; point/confused/thinking/shrug → thinking. Unknown names → curious. The old bitmap animation modes are accepted for protocol compatibility; this renderer animates continuous procedural expressions rather than replaying those bitmap frames. A small teal dot at the bottom means a valid body message arrived within eight seconds; violet means standalone.
 
 ## Audio and privacy
 
@@ -47,6 +49,7 @@ The startup order retains the tested clear-before-display-on fix. The original o
 
 - `?`: JSON status, measured fps, UART counters, microphone level, audio errors and touch count.
 - `F:happy`: show a mood for 10 seconds without moving the body.
+- `M:crab`: show a body move's expression and play its sound for 10 seconds without moving the body.
 - `PET:0`, `PET:1`, `PET:2`: lion, puppy, robot.
 - `SHOW` / `FOLLOW`: showcase / body mode.
 - `CHIRP`: play the greeting sound.

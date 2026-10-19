@@ -17,14 +17,62 @@ static constexpr int SPEAKER_VOLUME=100;
 static constexpr float CHIRP_AMPLITUDE=24000;
 bool micReady=false,speakerReady=false;
 
-void chirp(int kind){if(notes&&speakerReady&&soundEnabled.load())xQueueOverwrite(notes,&kind);}
+// A sound is a short series of tones. Each tone glides from f0 to f1 Hz,
+// bends up by `arch` Hz in the middle, wobbles by vibDepth Hz at vibHz,
+// and lasts ms milliseconds. f0 = 0 is a silent gap.
+struct Tone{uint16_t f0,f1;int16_t arch;uint8_t vibHz;uint8_t vibDepth;uint16_t ms;};
+struct Sound{uint8_t count;Tone tones[7];};
+#define GAP(ms) {0,0,0,0,0,ms}
+#define NOTE(f,ms) {f,f,0,0,0,ms}
+static const Sound sounds[SND_COUNT]={
+  // Original pet calls
+  {1,{{700,700,380,0,0,350}}},                                   // chirp
+  {1,{{520,520,380,0,0,350}}},                                   // affection
+  {1,{{180,180,0,6,65,700}}},                                    // purr
+  // Moods: CURIOUS, HAPPY, LOVE, SLEEPY, PARTY, SURPRISED, BRAVE, SAD, THINKING
+  {1,{{500,850,0,0,0,260}}},                                     // curious: rising "hm?"
+  {3,{{700,1000,0,0,0,120},GAP(40),{800,1200,0,0,0,150}}},       // happy: two bright chirps
+  {3,{{650,600,0,6,30,220},GAP(60),{560,520,0,6,30,280}}},       // love: soft "mm-mm"
+  {1,{{600,250,60,5,15,700}}},                                   // sleepy: long yawn
+  {4,{NOTE(523,90),NOTE(659,90),NOTE(784,90),NOTE(1047,160)}},   // party: arpeggio
+  {1,{{400,1400,0,0,0,160}}},                                    // surprised: quick upward sweep
+  {3,{{220,260,0,30,20,160},GAP(40),{330,330,0,30,20,260}}},     // brave: low growl
+  {3,{{700,420,0,5,15,420},GAP(60),{450,330,0,5,15,320}}},       // sad: falling sigh
+  {2,{{300,300,0,5,10,320},{300,430,0,0,0,160}}},                // thinking: "hmm?"
+  // Body moves, in Move order
+  {5,{{600,660,0,0,0,60},GAP(50),{520,580,0,0,0,60},GAP(50),{600,660,0,0,0,60}}},   // forward: pit-pat steps
+  {3,{NOTE(1000,130),GAP(110),NOTE(1000,130)}},                  // backward: reversing beeps
+  {1,{{950,600,0,0,0,220}}},                                     // left: falling swoop
+  {1,{{600,950,0,0,0,220}}},                                     // right: rising swoop
+  {3,{{480,280,80,5,15,650},GAP(80),{300,260,0,0,0,180}}},       // rest: yawn and sigh
+  {3,{NOTE(523,100),GAP(30),NOTE(784,240)}},                     // stand: ta-da
+  {3,{{700,900,0,0,0,130},GAP(40),{900,650,0,0,0,220}}},         // wave: "hel-lo"
+  {6,{NOTE(523,90),NOTE(659,90),NOTE(784,90),NOTE(1047,90),NOTE(784,90),NOTE(1047,180)}}, // dance
+  {5,{{400,900,0,0,0,50},GAP(50),{450,950,0,0,0,50},GAP(50),{500,1000,0,0,0,50}}},  // swim: bubbles
+  {3,{NOTE(1250,90),GAP(30),NOTE(1570,200)}},                    // point: "ding-ding"
+  {5,{{250,330,0,0,0,110},GAP(120),{250,330,0,0,0,110},GAP(120),{280,380,0,0,0,160}}}, // pushup: hup hup hup
+  {3,{NOTE(784,120),NOTE(659,120),NOTE(523,220)}},               // bow: polite descent
+  {1,{{900,1200,150,8,40,380}}},                                 // cute: "nya~"
+  {1,{{300,1200,0,15,250,600}}},                                 // freaky: wild warble
+  {1,{{500,700,0,10,120,520}}},                                  // worm: wiggly glide
+  {1,{{700,700,0,25,200,420}}},                                  // shake: fast trill
+  {3,{{450,350,0,0,0,160},GAP(60),{380,500,0,0,0,220}}},         // shrug: "meh?"
+  {1,{{600,150,0,4,20,900}}},                                    // dead: long fall
+  {7,{NOTE(1500,30),GAP(60),NOTE(1500,30),GAP(60),NOTE(1500,30),GAP(60),NOTE(1800,40)}}, // crab: clicks
+};
+static uint32_t soundMs(int id){uint32_t ms=0;for(int i=0;i<sounds[id].count;i++)ms+=sounds[id].tones[i].ms;return ms;}
+
+void playSound(int id){if(notes&&speakerReady&&soundEnabled.load()&&id>=0&&id<SND_COUNT)xQueueOverwrite(notes,&id);}
 
 static void audioTask(void*) {
   int16_t in[512],out[512]; // 256 stereo samples: 16 ms at 16 kHz
-  int sound=0,pos=0,total=0;float phase=0;
+  int sound=-1,tone=0,pos=0,len=0;float phase=0;
   for(;;){
     int request=0;
-    if(xQueueReceive(notes,&request,0)==pdTRUE){sound=request;pos=0;total=(sound==3?11200:5600);soundUntil.store(millis()+total/16+350);}
+    if(xQueueReceive(notes,&request,0)==pdTRUE){
+      sound=request;tone=0;pos=0;len=sounds[sound].tones[0].ms*16;
+      soundUntil.store(millis()+soundMs(sound)+350);
+    }
     if(micReady){
       if(esp_codec_dev_read(microphone,in,sizeof(in))==ESP_OK){
         // Remove DC separately for both channels; use the louder microphone.
@@ -37,15 +85,22 @@ static void audioTask(void*) {
     }
     for(int i=0;i<256;i++){
       float sample=0;
-      if(pos<total && soundEnabled.load()){
-        float t=pos/16000.f,u=pos/(float)total;
-        float f=sound==3?180+65*sinf(t*40):((sound==2?520:700)+380*sinf(u*3.14159f));
-        float envelope=fminf(1.f,u*18)*fminf(1.f,(1-u)*12);
-        // Original synthesized pet calls with a soft envelope. Peak is
-        // 1.18 * CHIRP_AMPLITUDE, kept just under int16 full scale.
-        phase+=6.2831853f*f/16000; if(phase>6.2831853f)phase-=6.2831853f;
-        sample=(sinf(phase)+.18f*sinf(phase*2))*envelope*CHIRP_AMPLITUDE;
-        pos++;
+      if(sound>=0 && soundEnabled.load()){
+        const Tone& k=sounds[sound].tones[tone];
+        if(k.f0){
+          float t=pos/16000.f,u=pos/(float)len;
+          float f=k.f0+(k.f1-k.f0)*u+k.arch*sinf(u*3.14159f)+k.vibDepth*sinf(6.2831853f*k.vibHz*t);
+          float envelope=fminf(1.f,u*18)*fminf(1.f,(1-u)*12);
+          // Synthesized calls with a soft envelope per tone. Peak is
+          // 1.18 * CHIRP_AMPLITUDE, kept just under int16 full scale.
+          phase+=6.2831853f*f/16000; if(phase>6.2831853f)phase-=6.2831853f;
+          sample=(sinf(phase)+.18f*sinf(phase*2))*envelope*CHIRP_AMPLITUDE;
+        }
+        if(++pos>=len){
+          pos=0;
+          if(++tone>=sounds[sound].count)sound=-1;
+          else len=sounds[sound].tones[tone].ms*16;
+        }
       }
       out[i*2]=out[i*2+1]=(int16_t)sample;
     }
