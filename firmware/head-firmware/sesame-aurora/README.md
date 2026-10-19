@@ -26,7 +26,7 @@ This head listens at 115200 baud on RX GPIO44 for the body's `F:<name>,<loop|onc
 | D7 / RX / GPIO44 | TXD / GPIO43 |
 | GND | GND |
 
-Each of the body's 19 moves has its own expression, badge label and sound: forward (WALK), backward (BACK), left, right, rest, stand (READY), wave (HELLO), dance, swim, point, pushup, bow, cute, freaky, worm, shake, shrug, dead and crab. A move stays on screen for at least 3 seconds. A body without `M:` lines (older firmware) still works from its face names, but its four walking commands then all look like WALK.
+Each of the body's 19 moves has its own expression, badge label and sound: forward (WALK), backward (BACK), left, right, rest, stand (READY), wave (HELLO), dance, swim, point, pushup, bow, cute, freaky, worm, shake, shrug, dead and crab. A move stays on screen for at least 3 seconds. Moves come only from `M:` lines, so the body needs firmware that sends them; face names alone never show a move.
 
 Faces that are not moves map to moods, each with its own sound (curious, the resting mood, is silent when it comes from the body): wave/walk/happy → happy; rest/sleepy/dead → sleepy; dance/excited/worm/freaky → party; cute/love/bow → love; angry/pushup/crab → brave; point/confused/thinking/shrug → thinking. Unknown names → curious. The old bitmap animation modes are accepted for protocol compatibility; this renderer animates continuous procedural expressions rather than replaying those bitmap frames. A small teal dot at the bottom means a valid body message arrived within eight seconds; violet means standalone.
 
@@ -39,6 +39,15 @@ With no battery the reading is the charger's own voltage (about 4.17 V), which l
 The control page and the `?` status show the voltage, the lowest voltage since boot, the charging state, the uptime and why the head last started (`power on`, `brownout`, `crash`, `watchdog`, `USB reset`, ...). The brownout count is kept in flash across restarts. If the head keeps restarting on battery with `brownout` as the reason, the battery can't supply the current peaks: charge it, use a bigger cell, or lower the volume and brightness.
 
 Buttons: **PWR** turns the board on (short press) and off (long press) when it runs on battery. **BOOT** toggles the showcase while running; held while pressing PWR or plugging in USB, it enters upload mode.
+
+## Power savers (planned, not built yet)
+
+The head now runs on USB or body power, so these wait until a battery goes back in. Both are from the October 2026 review.
+
+- **Wi-Fi off when unused.** The access point stays on all the time (`initWeb()`, with `WiFi.setSleep(false)`). It is the biggest power draw and likely why the battery drained fast. Plan: if no phone has connected within 10 minutes of starting, turn the access point off (`WiFi.softAPdisconnect(true)` and `WiFi.mode(WIFI_OFF)`). Restarting the head brings it back. This also frees roughly 50 KB of internal RAM.
+- **Speaker amplifier off when silent.** `audioTask()` writes silence to the speaker all the time, so the amplifier (PA, GPIO46) never switches off. Plan: mute the codec or switch the PA off once `soundUntil` has passed, and back on just before the next sound. This saves power and removes any background hiss.
+
+Not worth changing: re-sending the brightness every 2 s and reading the battery voltage without a battery each cost almost nothing.
 
 ## Audio and privacy
 

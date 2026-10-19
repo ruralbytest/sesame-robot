@@ -17,7 +17,8 @@ static WebServer server(80);
 static esp_lcd_panel_handle_t panel=nullptr;
 static esp_lcd_panel_io_handle_t panelIo=nullptr;
 static SemaphoreHandle_t flushDone=nullptr;
-static uint16_t* dmaBuf=nullptr;
+// Two strip buffers: while one strip is being sent, the next is prepared.
+static uint16_t* dmaBuf[2]={nullptr,nullptr};
 static constexpr int ROWS=24;
 static bool touchReady=false,showcase=false,reactEnabled=true,apReady=false;
 static uint32_t lastBody=0,bodyLines=0,uartBytes=0,touchCount=0,soundReactions=0;
@@ -26,7 +27,7 @@ static Mood bodyMood=CURIOUS,manualMood=CURIOUS;
 // Body moves arrive as "M:<command>" lines. A move stays on screen for at
 // least MOVE_HOLD_MS, so one-shot poses like rest or stand are still seen.
 static Move bodyMove=NO_MOVE,manualMove=NO_MOVE;
-static uint32_t bodyMoveAt=0,moveClearAt=0,lastMoveLine=0;
+static uint32_t bodyMoveAt=0,moveClearAt=0;
 static constexpr uint32_t MOVE_HOLD_MS=3000;
 static uint32_t manualUntil=0,nextFrame=0,lastAudioReaction=0,showStart=0;
 static float noiseFloor=.002f,energy=0,framesPerSecond=0;
@@ -71,21 +72,27 @@ static bool IRAM_ATTR flushed(esp_lcd_panel_io_handle_t,esp_lcd_panel_io_event_d
   BaseType_t wake=pdFALSE;xSemaphoreGiveFromISR(flushDone,&wake);return wake==pdTRUE;
 }
 static void brightness(int percent){uint8_t b=constrain(percent,0,100)*255/100;ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(panelIo,(0x02<<24)|(0x51<<8),&b,1));}
+static void waitFlush(){
+  if(xSemaphoreTake(flushDone,pdMS_TO_TICKS(1000))!=pdTRUE){Serial.println("Display transfer timeout");esp_restart();}
+}
 static void pushFrame(){
-  for(int y=0;y<466;y+=ROWS){
-    int h=std::min(ROWS,466-y),n=466*h;const uint16_t* src=scene.g.p+y*466;
-    for(int i=0;i<n;i++)dmaBuf[i]=(src[i]<<8)|(src[i]>>8);
-    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,y,466,y+h,dmaBuf));
-    if(xSemaphoreTake(flushDone,pdMS_TO_TICKS(1000))!=pdTRUE){Serial.println("Display transfer timeout");esp_restart();}
+  int inFlight=0,k=0;
+  for(int y=0;y<466;y+=ROWS,k^=1){
+    // Strips finish in order, so with two in flight the older one used dmaBuf[k].
+    if(inFlight==2){waitFlush();inFlight--;}
+    int h=std::min(ROWS,466-y),n=466*h;const uint16_t* src=scene.g.p+y*466;uint16_t* dst=dmaBuf[k];
+    for(int i=0;i<n;i++)dst[i]=(src[i]<<8)|(src[i]>>8);
+    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,y,466,y+h,dst));inFlight++;
   }
+  while(inFlight){waitFlush();inFlight--;}
 }
 static void initDisplay(){
-  delay(2000);flushDone=xSemaphoreCreateBinary();
+  delay(2000);flushDone=xSemaphoreCreateCounting(2,0); // one count per finished strip
   scene.g.p=(uint16_t*)heap_caps_malloc(466*466*2,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
   scene.background=(uint16_t*)heap_caps_malloc(466*466*2,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
   scene.base=(uint16_t*)heap_caps_malloc(466*466*2,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
-  dmaBuf=(uint16_t*)heap_caps_malloc(466*ROWS*2,MALLOC_CAP_DMA|MALLOC_CAP_INTERNAL);
-  if(!scene.g.p||!scene.background||!scene.base||!dmaBuf||!flushDone){Serial.println("ERROR: enable OPI PSRAM in board settings");while(true)delay(1000);}
+  for(auto& b:dmaBuf)b=(uint16_t*)heap_caps_malloc(466*ROWS*2,MALLOC_CAP_DMA|MALLOC_CAP_INTERNAL);
+  if(!scene.g.p||!scene.background||!scene.base||!dmaBuf[0]||!dmaBuf[1]||!flushDone){Serial.println("ERROR: enable OPI PSRAM in board settings");while(true)delay(1000);}
   spi_bus_config_t bus={};bus.sclk_io_num=14;bus.data0_io_num=9;bus.data1_io_num=10;bus.data2_io_num=11;bus.data3_io_num=12;bus.max_transfer_sz=466*ROWS*2;
   ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST,&bus,SPI_DMA_CH_AUTO));
   esp_lcd_panel_io_spi_config_t io={};io.cs_gpio_num=15;io.dc_gpio_num=-1;io.spi_mode=0;io.pclk_hz=40000000;io.trans_queue_depth=2;io.on_color_trans_done=flushed;io.lcd_cmd_bits=32;io.lcd_param_bits=8;io.flags.quad_mode=true;
@@ -189,7 +196,7 @@ static void bodyMessage(String line,bool fromUsb){
   if(line.startsWith("M:")){
     String name=line.substring(2);name.trim();name.toLowerCase();Move m=moveFromName(name.c_str());
     if(fromUsb){if(m!=NO_MOVE){showcase=false;previewMove(m);moveSound(m);}return;}
-    lastBody=lastMoveLine=millis();bodyLines++;
+    lastBody=millis();bodyLines++;
     if(m!=NO_MOVE)startBodyMove(m);else endBodyMove(); // "M:idle" when the body stops
     return;
   }
@@ -202,10 +209,7 @@ static void bodyMessage(String line,bool fromUsb){
   if(name!=bodyFace||mode!=bodyMode){
     Mood previous=bodyMood;
     bodyFace=name;bodyMode=mode;bodyMood=faceMood(name);
-    // A body without "M:" lines (older firmware): read the move from the face.
-    // Its four walking commands all show "walk", so they look the same.
-    bool legacyBody=!lastMoveLine||millis()-lastMoveLine>10000;
-    if(legacyBody){Move m=moveFromName(name.c_str());if(m!=NO_MOVE)startBodyMove(m);else endBodyMove();}
+    // Moves come only from "M:" lines, never from face names.
     // Faces that are not moves (happy, sad, ... sent with "fc") get their mood
     // sound. Curious is the resting face, so it stays silent.
     if(bodyMove==NO_MOVE&&bodyMood!=previous&&bodyMood!=CURIOUS)moodSound(bodyMood);
