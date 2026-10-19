@@ -11,6 +11,10 @@ static QueueHandle_t notes=nullptr;
 std::atomic<float> micLevel{0};
 std::atomic<uint32_t> audioBlocks{0},audioErrors{0},soundUntil{0};
 std::atomic<bool> soundEnabled{true};
+// Volume 0..100 maps to -50..0 dB in the codec; 100 = full DAC level.
+// Raise CHIRP_AMPLITUDE/SPEAKER_VOLUME together if calls are still too quiet.
+static constexpr int SPEAKER_VOLUME=100;
+static constexpr float CHIRP_AMPLITUDE=24000;
 bool micReady=false,speakerReady=false;
 
 void chirp(int kind){if(notes&&speakerReady&&soundEnabled.load())xQueueOverwrite(notes,&kind);}
@@ -37,9 +41,10 @@ static void audioTask(void*) {
         float t=pos/16000.f,u=pos/(float)total;
         float f=sound==3?180+65*sinf(t*40):((sound==2?520:700)+380*sinf(u*3.14159f));
         float envelope=fminf(1.f,u*18)*fminf(1.f,(1-u)*12);
-        // Quiet, original synthesized pet calls with a soft envelope.
+        // Original synthesized pet calls with a soft envelope. Peak is
+        // 1.18 * CHIRP_AMPLITUDE, kept just under int16 full scale.
         phase+=6.2831853f*f/16000; if(phase>6.2831853f)phase-=6.2831853f;
-        sample=(sinf(phase)+.18f*sinf(phase*2))*envelope*8000;
+        sample=(sinf(phase)+.18f*sinf(phase*2))*envelope*CHIRP_AMPLITUDE;
         pos++;
       }
       out[i*2]=out[i*2+1]=(int16_t)sample;
@@ -92,7 +97,7 @@ bool initPeripherals(){
     auto codec=es8311_codec_new(&c);
     if(codec&&data){esp_codec_dev_cfg_t d={};d.dev_type=ESP_CODEC_DEV_TYPE_OUT;d.codec_if=codec;d.data_if=data;speaker=esp_codec_dev_new(&d);}
     speakerReady=speaker&&esp_codec_dev_open(speaker,&fs)==ESP_OK;
-    if(speakerReady){esp_codec_dev_set_out_vol(speaker,80);esp_codec_dev_set_out_mute(speaker,false);}
+    if(speakerReady){esp_codec_dev_set_out_vol(speaker,SPEAKER_VOLUME);esp_codec_dev_set_out_mute(speaker,false);}
   }
   if(hasMic){
     ctl.addr=ES7210_CODEC_DEFAULT_ADDR;
