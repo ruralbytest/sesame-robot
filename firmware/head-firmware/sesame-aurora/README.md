@@ -32,7 +32,9 @@ Faces that are not moves map to moods, each with its own sound (curious, the res
 
 ## Battery
 
-The face shows a phone-style battery icon under the character's name: the percentage, red at 15% or less, green with a bolt while charging. The voltage is read on GPIO4 (half the cell voltage) and the charging state on GPIO7 (ETA6098 STAT, low while charging). The percentage comes from a typical LiPo voltage curve, so it reads a little low while the speaker or Wi-Fi draws current.
+The face shows a phone-style battery icon under the character's name: the percentage, red at 15% or less, green with a bolt while charging. The voltage is read on GPIO4 (half the cell voltage). The charger's status pin doesn't reach the ESP32 usably on this board (GPIO7, used by Waveshare's example, always reads "not charging"), so charging is inferred: the bolt shows at once when USB is connected to a computer, and about a minute after plugging into a wall charger, once the voltage has kept rising. It goes away about a minute after unplugging a wall charger.
+
+With no battery the reading is the charger's own voltage (about 4.17 V), which looks like a full battery. So the icon only shows when the control page's **Battery fitted** switch is on (`BATTERY:1` / `BATTERY:0` over USB). The setting is saved in flash and starts off. The percentage comes from a typical LiPo voltage curve, so it reads a little low while the speaker or Wi-Fi draws current.
 
 The control page and the `?` status show the voltage, the lowest voltage since boot, the charging state, the uptime and why the head last started (`power on`, `brownout`, `crash`, `watchdog`, `USB reset`, ...). The brownout count is kept in flash across restarts. If the head keeps restarting on battery with `brownout` as the reason, the battery can't supply the current peaks: charge it, use a bigger cell, or lower the volume and brightness.
 

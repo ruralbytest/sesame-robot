@@ -38,12 +38,20 @@ static bool bodyControl=true;
 static const char* const TRICKS[]={"wave","bow","dance","cute","point","shrug"};
 static uint8_t nextTrick=0;
 static uint32_t commandSentAt=0,commandsSent=0;
-// Battery: GPIO4 reads half the cell voltage; GPIO7 (ETA6098 STAT) is low
-// while charging. Pins from Waveshare's 01_ADC_Test example.
-static constexpr int BATTERY_ADC_PIN=4,CHARGE_STAT_PIN=7;
-static float batteryMv=0;
-static int batteryLowestMv=0,batteryPercent=-1;
-static bool charging=false;
+// Battery: GPIO4 reads half the cell voltage (Waveshare's 01_ADC_Test).
+// The charger's STAT pin (GPIO7 in that example) reads "not charging" on
+// this board even while charging, so charging is inferred instead: USB is
+// connected to a computer, or the voltage keeps rising over a minute.
+static constexpr int BATTERY_ADC_PIN=4;
+static constexpr int TREND_SAMPLES=30;  // readings every 2 s: one minute
+static constexpr float TREND_MV=15;     // rise or fall that flips the state
+static float batteryMv=0,trend[TREND_SAMPLES];
+static int batteryLowestMv=0,batteryPercent=-1,trendCount=0;
+static bool charging=false,usbPlugged=false,voltageRising=false;
+// With no battery the reading is the charger's own ~4.17 V, which looks the
+// same as a full battery. So the owner says whether one is fitted (saved).
+static bool batteryFitted=false;
+static void saveBatteryFitted(bool on){batteryFitted=on;Preferences prefs;prefs.begin("aurora",false);prefs.putBool("battery",on);prefs.end();}
 // The cold-start workaround restarts the chip, which hides why it really
 // started. Keep the first reason across that restart, in RTC memory.
 RTC_NOINIT_ATTR static uint32_t savedResetReason,savedResetMagic;
@@ -121,9 +129,20 @@ static int lipoPercent(float mv){
 static void readBattery(){
   uint32_t sum=0;for(int i=0;i<16;i++)sum+=analogReadMilliVolts(BATTERY_ADC_PIN);
   float mv=sum/16.f*2;
-  charging=digitalRead(CHARGE_STAT_PIN)==LOW;
-  if(mv<2500){batteryPercent=-1;batteryMv=mv;return;} // no battery or no reading
+#if ARDUINO_USB_MODE
+  usbPlugged=HWCDC::isPlugged(); // a computer is talking USB to the head
+#endif
+  if(mv<2500){batteryPercent=-1;batteryMv=mv;charging=false;trendCount=0;return;} // no battery or no reading
   batteryMv=batteryMv<2500?mv:batteryMv*.8f+mv*.2f;
+  // Compare with one minute ago. A charger (even a wall plug the head can't
+  // see) pushes the voltage up; unplugging makes it fall back.
+  float minuteAgo=trend[trendCount%TREND_SAMPLES];
+  if(trendCount>=TREND_SAMPLES){
+    if(batteryMv-minuteAgo>=TREND_MV)voltageRising=true;
+    else if(minuteAgo-batteryMv>=TREND_MV)voltageRising=false;
+  }
+  trend[trendCount%TREND_SAMPLES]=batteryMv;trendCount++;
+  charging=usbPlugged||voltageRising;
   if(!batteryLowestMv||mv<batteryLowestMv)batteryLowestMv=(int)mv;
   int p=lipoPercent(batteryMv);
   // Hysteresis: load spikes should not make the number flicker.
@@ -153,8 +172,8 @@ static void sendBody(const char* cmd){
   Serial.printf("To body: C:%s\n",cmd);
 }
 static String status(){
-  char b[900];snprintf(b,sizeof(b),"{\"mood\":\"%s\",\"move\":\"%s\",\"character\":%d,\"fps\":%.1f,\"energy\":%.3f,\"rawMic\":%.5f,\"mic\":%s,\"speaker\":%s,\"touch\":%s,\"link\":%s,\"bodyLines\":%lu,\"uartBytes\":%lu,\"touches\":%lu,\"reactions\":%lu,\"audioBlocks\":%lu,\"audioErrors\":%lu,\"sound\":%s,\"react\":%s,\"show\":%s,\"bodyControl\":%s,\"commandsSent\":%lu,\"batteryMv\":%d,\"batteryLowestMv\":%d,\"battery\":%d,\"charging\":%s,\"startReason\":\"%s\",\"brownouts\":%lu,\"uptime\":%lu,\"heap\":%u}",
-    moodName(scene.mood),scene.move!=NO_MOVE?moveLabel(scene.move):"",scene.character,framesPerSecond,energy,micLevel.load(),micReady?"true":"false",speakerReady?"true":"false",touchReady?"true":"false",bodyLinked()?"true":"false",(unsigned long)bodyLines,(unsigned long)uartBytes,(unsigned long)touchCount,(unsigned long)soundReactions,(unsigned long)audioBlocks.load(),(unsigned long)audioErrors.load(),soundEnabled?"true":"false",reactEnabled?"true":"false",showcase?"true":"false",bodyControl?"true":"false",(unsigned long)commandsSent,(int)batteryMv,batteryLowestMv,batteryPercent,charging?"true":"false",resetName(startReason),(unsigned long)brownouts,(unsigned long)(millis()/1000),ESP.getFreeHeap());
+  char b[900];snprintf(b,sizeof(b),"{\"mood\":\"%s\",\"move\":\"%s\",\"character\":%d,\"fps\":%.1f,\"energy\":%.3f,\"rawMic\":%.5f,\"mic\":%s,\"speaker\":%s,\"touch\":%s,\"link\":%s,\"bodyLines\":%lu,\"uartBytes\":%lu,\"touches\":%lu,\"reactions\":%lu,\"audioBlocks\":%lu,\"audioErrors\":%lu,\"sound\":%s,\"react\":%s,\"show\":%s,\"bodyControl\":%s,\"commandsSent\":%lu,\"batteryMv\":%d,\"batteryLowestMv\":%d,\"battery\":%d,\"charging\":%s,\"batteryFitted\":%s,\"startReason\":\"%s\",\"brownouts\":%lu,\"uptime\":%lu,\"heap\":%u}",
+    moodName(scene.mood),scene.move!=NO_MOVE?moveLabel(scene.move):"",scene.character,framesPerSecond,energy,micLevel.load(),micReady?"true":"false",speakerReady?"true":"false",touchReady?"true":"false",bodyLinked()?"true":"false",(unsigned long)bodyLines,(unsigned long)uartBytes,(unsigned long)touchCount,(unsigned long)soundReactions,(unsigned long)audioBlocks.load(),(unsigned long)audioErrors.load(),soundEnabled?"true":"false",reactEnabled?"true":"false",showcase?"true":"false",bodyControl?"true":"false",(unsigned long)commandsSent,(int)batteryMv,batteryLowestMv,batteryPercent,charging?"true":"false",batteryFitted?"true":"false",resetName(startReason),(unsigned long)brownouts,(unsigned long)(millis()/1000),ESP.getFreeHeap());
   return String(b);
 }
 static void bodyMessage(String line,bool fromUsb){
@@ -164,6 +183,7 @@ static void bodyMessage(String line,bool fromUsb){
   if(line=="SHOW"&&fromUsb){showcase=true;showStart=millis();return;}
   if(line=="FOLLOW"&&fromUsb){showcase=false;manualUntil=0;return;}
   if(line=="CHIRP"&&fromUsb){chirp(1);return;}
+  if((line=="BATTERY:1"||line=="BATTERY:0")&&fromUsb){saveBatteryFitted(line=="BATTERY:1");Serial.printf("Battery fitted: %s\n",batteryFitted?"yes":"no");return;}
   if((line=="BODY:1"||line=="BODY:0")&&fromUsb){bodyControl=line=="BODY:1";Serial.printf("Body control %s\n",bodyControl?"on":"off");return;}
   if(line.startsWith("PET:")&&fromUsb){scene.character=constrain(line.substring(4).toInt(),0,2);return;}
   if(line.startsWith("M:")){
@@ -212,6 +232,7 @@ static void initWeb(){
     else if(a=="follow"){showcase=false;manualUntil=0;reply="Following the body again.";}
     else if(a=="sound"){soundEnabled.store(v=="1");reply=soundEnabled?"Sound on":"Sound muted";}
     else if(a=="react"){reactEnabled=v=="1";reply=reactEnabled?"Sound reactions on":"Sound reactions paused";}
+    else if(a=="battery"){saveBatteryFitted(v=="1");reply=batteryFitted?"Battery icon on. Saved.":"No battery: icon hidden. Saved.";}
     else if(a=="body"){bodyControl=v=="1";reply=bodyControl?"Double-tap the head for a trick. Touch it to stop.":"Touch reacts on the head only.";}
     else if(a=="chirp"){chirp(1);preview(HAPPY,2000);reply="Hello!";}
     else{server.send(400,"text/plain","Unknown control");return;}
@@ -281,14 +302,14 @@ void auroraSetup(){
   // After the workaround's own restart, report the reason that came before it.
   startReason=(reason==ESP_RST_SW&&savedResetMagic==RESET_MAGIC)?(esp_reset_reason_t)savedResetReason:reason;
   savedResetMagic=0;
-  pinMode(CHARGE_STAT_PIN,INPUT_PULLUP);analogReadResolution(12);analogSetPinAttenuation(BATTERY_ADC_PIN,ADC_11db);
+  analogReadResolution(12);analogSetPinAttenuation(BATTERY_ADC_PIN,ADC_11db);
   initDisplay();
   // Preserve the known working board-specific cold-start reset workaround.
   if(reason==ESP_RST_POWERON||reason==ESP_RST_BROWNOUT){
     savedResetReason=reason;savedResetMagic=RESET_MAGIC;
     while(millis()<3000)delay(10);Serial.println("Cold start: one warm restart");Serial.flush();esp_restart();
   }
-  {Preferences prefs;prefs.begin("aurora",false);brownouts=prefs.getUInt("brownouts",0);
+  {Preferences prefs;prefs.begin("aurora",false);brownouts=prefs.getUInt("brownouts",0);batteryFitted=prefs.getBool("battery",false);
    if(startReason==ESP_RST_BROWNOUT)prefs.putUInt("brownouts",++brownouts);prefs.end();}
   readBattery();
   Serial.printf("Started by: %s (brownouts so far: %lu). Battery %d mV, %d%%%s\n",resetName(startReason),(unsigned long)brownouts,(int)batteryMv,batteryPercent,charging?", charging":"");
@@ -314,7 +335,7 @@ void auroraLoop(){
     }
     scene.linked=lastBody&&now-lastBody<8000;
     static uint32_t batteryAt=0;if(now-batteryAt>=2000){batteryAt=now;readBattery();}
-    scene.batteryPercent=batteryPercent;scene.charging=charging;
+    scene.batteryPercent=batteryFitted?batteryPercent:-1;scene.charging=charging;
     scene.draw(now/1000.f);pushFrame();frames++;
     if(now-fpsAt>=2000){framesPerSecond=frames*1000.f/(now-fpsAt);frames=0;fpsAt=now;}
   }
