@@ -19,3 +19,6 @@ You do not need a paid CAD suite to remix Sesame’s parts. A few practical work
 > [!TIP]
 > Keep the original STEP/ Fusion file untouched and branch your edits into a copy. That way you can always rebase onto the upstream design if new hardware revisions ship.
 
+## Generated parts
+
+The Aurora head (round AMOLED head shell and its top cover) is not in the Fusion file. It is generated from the No-Ears cover STL by [`aurora-head/generate_aurora_head.py`](aurora-head/generate_aurora_head.py); see [printing/stl/top-covers/aurora-head](../printing/stl/top-covers/aurora-head/README.md).
