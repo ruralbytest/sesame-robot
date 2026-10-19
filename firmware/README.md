@@ -61,6 +61,7 @@ This document provides technical information on the firmware architecture, contr
    - For Sesame Distro Board V1: Select "ESP32 Dev Module"
    - For Sesame Distro Board V2 or V3: Select "ESP32S3 Dev Module"
    - For Seeed Studio XIAO ESP32-S3: Select "XIAO_ESP32S3"
+   - For PCBCupid Glyph ESP32-S3: Select "Pcbcupid GLYPH S3" (or "Pcbcupid GLYPH S3 PSRAM" for the PSRAM version)
 4. **Configure board settings**:
 
    - **For Lolin S2 Mini**:
@@ -73,6 +74,9 @@ This document provides technical information on the firmware architecture, contr
      - **Partition Scheme**: "Default 4MB with spiffs"
    - **For Seeed Studio XIAO ESP32-S3**:
      - **USB CDC On Boot**: "Enabled" (Required for Serial Monitor / CLI over the XIAO native USB)
+   - **For PCBCupid Glyph ESP32-S3**:
+     - **USB CDC On Boot**: "Enabled" (the board's default)
+     - **Partition Scheme**: "Default 4MB with spiffs"
 5. **Select the correct port**:
 
    - Go to **Tools → Port** and select your ESP32's COM port
@@ -85,6 +89,7 @@ This document provides technical information on the firmware architecture, contr
    - **If you built with the Distro Board V2:** Uncomment the V2 `servoPins` array and `I2C_SDA`/`I2C_SCL` defines. Comment out others.
    - **If you built with the Distro Board V1:** Uncomment the V1 `servoPins` array and `I2C_SDA`/`I2C_SCL` defines. Comment out others.
    - **If you built with the Seeed Studio XIAO ESP32-S3:** Nothing to change — the firmware auto-detects the XIAO (via the `ARDUINO_XIAO_ESP32S3` board macro) and selects the correct `servoPins` and I2C pins. Just pick "XIAO_ESP32S3" in step 3.
+   - **If you built with the PCBCupid Glyph ESP32-S3:** Nothing to change either — it is auto-detected (`ARDUINO_PCBCUPID_GLYPH_S3` / `ARDUINO_PCBCUPID_GLYPH_S3_PSRAM`). It defaults to the round head board; build with `-DGLYPH_HEAD_LINK=0` for an SSD1306 OLED. See the Glyph pin table under [Hardware Abstraction Layer](#hardware-abstraction-layer-hal).
 7. **(Optional) Configure network mode**:
 
    - If you want the robot to connect to your WiFi network (for API access and remote control), edit the network configuration section (around line 17-22):
@@ -839,6 +844,33 @@ D7 is the only unused GPIO. To verify either wiring one servo at a time (the tes
 > harmless servo twitch on every reset while the bootloader logs over it. To avoid
 > it, move L3 to the unused D7 (GPIO44) and update `servoPins[]`. D2 (GPIO3) is an
 > ESP32-S3 strapping pin but works fine as a servo output once firmware is running.
+
+#### PCBCupid Glyph ESP32-S3 (ESP32-S3-MINI-1)
+
+Auto-detected when "Pcbcupid GLYPH S3" or "Pcbcupid GLYPH S3 PSRAM" is selected. The servo pins are the same in both modes. By default the face is on the round head board over UART1. Build with `-DGLYPH_HEAD_LINK=0` (or set `GLYPH_HEAD_LINK` to 0 at the top of the sketch) to use an SSD1306 OLED on SDA/SCL instead; the Glink (QWIIC) connector carries the same I2C pins. Pin labels are the silkscreen names.
+
+| Motor/Component | Array Index | Glyph Pin | GPIO Pin | Notes                                          |
+| --------------- | ----------- | --------- | -------- | ---------------------------------------------- |
+| Motor 0         | 0           | A6        | 6        | R1                                             |
+| Motor 1         | 1           | A7        | 7        | R2                                             |
+| Motor 2         | 2           | A8        | 8        | L1                                             |
+| Motor 3         | 3           | A9        | 9        | L2                                             |
+| Motor 4         | 4           | A10       | 10       | R4                                             |
+| Motor 5         | 5           | D13       | 13       | R3                                             |
+| Motor 6         | 6           | D14       | 14       | L3                                             |
+| Motor 7         | 7           | D15       | 15       | L4                                             |
+| **Head TX**     | -           | **D17**   | **17**   | Head link only: to the head's RXD pad (GPIO44) |
+| **Head RX**     | -           | **D18**   | **18**   | Head link only: from the head's TXD pad (GPIO43) |
+| **I2C SDA**     | -           | **SDA**   | **4**    | OLED build only: SSD1306 Data                  |
+| **I2C SCL**     | -           | **SCL**   | **5**    | OLED build only: SSD1306 Clock                 |
+| GND             | -           | GND       | -        | Shared with the servo supply (and the head)    |
+
+Pins left free on purpose: IO1 (A1, battery sense through the MSR jumper; the schematic and board file say IO1, the web page says IO0), IO21 (onboard LED), IO43/IO44 (TX/RX, USB serial and boot log). IO0 is the BOOT button and is not on the headers. Spare: IO2 (A2), IO16 (D16), IO35–37 (SCK/MO/MI).
+
+> [!WARNING]
+> The Glyph's 3V3 regulator gives about 900 mA peak, which is not enough for 8
+> servos. Power the servos from a separate 5 V supply and join its ground to the
+> Glyph's GND.
 
 ### Porting to Other ESP32 Variants
 

@@ -7,11 +7,32 @@
 #if defined(ARDUINO_XIAO_ESP32S3) && !defined(XIAO_HEAD_LINK)
 #define XIAO_HEAD_LINK 1
 #endif
+
+// --- PCBCupid Glyph ESP32-S3 head link ---
+// Auto-selected with the "Pcbcupid GLYPH S3" (or "... S3 PSRAM") board.
+// Like the XIAO it defaults to the round head board, here on UART1
+// (IO17 TX / IO18 RX). Build with -DGLYPH_HEAD_LINK=0 for the SSD1306 OLED
+// on the Glyph's SDA/SCL pads (IO4/IO5) instead.
+#if defined(ARDUINO_PCBCUPID_GLYPH_S3) || defined(ARDUINO_PCBCUPID_GLYPH_S3_PSRAM)
+#define GLYPH_S3 1
+#ifndef GLYPH_HEAD_LINK
+#define GLYPH_HEAD_LINK 1
+#endif
+#else
+#define GLYPH_S3 0
+#endif
+
 #if defined(ARDUINO_XIAO_ESP32S3) && XIAO_HEAD_LINK
 #define HAS_HEAD_LINK 1
 #define HAS_OLED 0
 #define HEAD_RX_PIN 44   // D7, from the head's TXD (GPIO43)
 #define HEAD_TX_PIN 43   // D6, to the head's RXD (GPIO44)
+#define HEAD_BAUD 115200
+#elif GLYPH_S3 && GLYPH_HEAD_LINK
+#define HAS_HEAD_LINK 1
+#define HAS_OLED 0
+#define HEAD_RX_PIN 18   // IO18 (U1RXD), from the head's TXD (GPIO43)
+#define HEAD_TX_PIN 17   // IO17 (U1TXD), to the head's RXD (GPIO44)
 #define HEAD_BAUD 115200
 #else
 #define HAS_HEAD_LINK 0
@@ -53,6 +74,10 @@
 // Seeed Studio XIAO ESP32-S3 (auto-selected when the XIAO_ESP32S3 board is chosen)
 #define I2C_SDA 5   // D4 - XIAO default SDA
 #define I2C_SCL 6   // D5 - XIAO default SCL
+#elif GLYPH_S3
+// PCBCupid Glyph ESP32-S3 (auto-selected) - board SDA/SCL pads
+#define I2C_SDA 4
+#define I2C_SCL 5
 #else
 // I2C Pins for Distro Board V2 / V3
 //#define I2C_SDA 8
@@ -143,6 +168,13 @@ const int servoPins[8] = {1, 2, 3, 4, 5, 6, 7, 8};
 // reset; move L3 to the free D7 (GPIO44) and update this array to avoid it.
 //   R1=D0  R2=D3  L1=D2  L2=D1  R4=D8  R3=D10  L3=D6  L4=D9
 const int servoPins[8] = {1, 4, 3, 2, 7, 9, 43, 8};
+#elif GLYPH_S3
+// PCBCupid Glyph ESP32-S3 - same servo pins with or without the head link,
+// in servo-index order. Kept off IO0 (boot strap), IO1 (battery sense, MSR),
+// IO4/IO5 (I2C), IO17/IO18 (head link UART1), IO21 (LED) and IO43/IO44
+// (UART0). Spare: IO2, IO16, IO35-37.
+//   R1=IO6  R2=IO7  L1=IO8  L2=IO9  R4=IO10  R3=IO13  L3=IO14  L4=IO15
+const int servoPins[8] = {6, 7, 8, 9, 10, 13, 14, 15};
 #else
 // Sesame Distro Board V3 Pinout [NEW]
 //const int servoPins[8] = {4, 5, 6, 7, 10, 11, 12, 13};
