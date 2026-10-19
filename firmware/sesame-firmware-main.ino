@@ -39,13 +39,33 @@
 #define HAS_OLED 1
 #endif
 
+// --- PCA9685 servo driver (optional, any board) ---
+// Build with -DUSE_PCA9685=1 (or change the 0 below) to drive the 8 servos
+// from a PCA9685 16-channel board on the I2C bus (I2C_SDA/I2C_SCL below;
+// IO4/IO5 on the Glyph) instead of ESP32 GPIO PWM. Servo index i goes to
+// channel pcaChannels[i]; channels 8-15 stay free. The OLED (0x3C) can share
+// the bus. Needs the "Adafruit PWM Servo Driver Library".
+#ifndef USE_PCA9685
+#define USE_PCA9685 0
+#endif
+#define PCA9685_ADDR 0x40
+// Real PCA9685 oscillators run near 27 MHz, not the nominal 25 MHz; trim
+// this if servo angles are off on every channel by the same amount.
+#define PCA9685_OSC_HZ 27000000
+
 #include <WiFi.h>
 #include <WebServer.h>
 #include <DNSServer.h>
 #include <ESPmDNS.h>
-#include <ESP32Servo.h>
-#if HAS_OLED
+#if HAS_OLED || USE_PCA9685
 #include <Wire.h>
+#endif
+#if USE_PCA9685
+#include <Adafruit_PWMServoDriver.h>
+#else
+#include <ESP32Servo.h>
+#endif
+#if HAS_OLED
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #endif
@@ -151,8 +171,17 @@ const uint32_t WIFI_SETUP_START_DELAY_MS = 300;  // let the HTTP response flush 
 // Pin numbers are coorisponding to the ESP32 GPIO pins and may differ based on which board you use.
 // If you are using a different board, please adjust the servoPins array accordingly.
 // ======================================================================
+#if USE_PCA9685
+// PCA9685 build: the servo signals come from the PCA9685, not GPIOs.
+// R1=CH0 R2=CH1 L1=CH2 L2=CH3 R4=CH4 R3=CH5 L3=CH6 L4=CH7 (servo-index order)
+Adafruit_PWMServoDriver pca(PCA9685_ADDR, Wire);
+const uint8_t pcaChannels[8] = {0, 1, 2, 3, 4, 5, 6, 7};
+#else
 Servo servos[8];
-#if defined(ARDUINO_XIAO_ESP32S3) && HAS_HEAD_LINK
+#endif
+#if USE_PCA9685
+// servoPins is unused here; the GPIOs that held servos are free.
+#elif defined(ARDUINO_XIAO_ESP32S3) && HAS_HEAD_LINK
 // Seeed Studio XIAO ESP32-S3 with the round head board - all 8 servos run on
 // LEDC hardware PWM via ESP32Servo. Hips on D0-D3, knees on D4/D5/D8/D9, in
 // servo-index order, so the GPIOs run 1 to 8. D6/D7 carry the head link;
@@ -859,10 +888,12 @@ void setup() {
   Serial1.begin(HEAD_BAUD, SERIAL_8N1, HEAD_RX_PIN, HEAD_TX_PIN);
 #endif
 
-#if HAS_OLED
-  // I2C Init for ESP32
+#if HAS_OLED || USE_PCA9685
+  // I2C Init for ESP32 (OLED and/or PCA9685)
   Wire.begin(I2C_SDA, I2C_SCL);
+#endif
 
+#if HAS_OLED
   // OLED Init
   if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDR)) {
     Serial.println(F("SSD1306 allocation failed."));
@@ -939,17 +970,29 @@ void setup() {
   
   server.begin();
 
+#if USE_PCA9685
+  // PCA9685 Init: 50 Hz servo frames. Outputs stay off (servos limp) until
+  // the first setServoAngle(), the same as the GPIO build.
+  Wire.beginTransmission(PCA9685_ADDR);
+  if (Wire.endTransmission() != 0) {
+    Serial.println(F("PCA9685 not found at 0x40 - check SDA/SCL, VCC and GND."));
+  }
+  pca.begin();
+  pca.setOscillatorFrequency(PCA9685_OSC_HZ);
+  pca.setPWMFreq(50);
+#else
   // PWM Init
   ESP32PWM::allocateTimer(0);
   ESP32PWM::allocateTimer(1);
   ESP32PWM::allocateTimer(2);
   ESP32PWM::allocateTimer(3);
-  
+
   for (int i = 0; i < 8; i++) {
     servos[i].setPeriodHertz(50);
     // Map 0-180 to approx 732-2929us
     servos[i].attach(servoPins[i], 732, 2929);
   }
+#endif
   delay(10);
   
   // Show rest face on startup without moving motors
@@ -1275,7 +1318,12 @@ void updateIdleBlink() {
 void setServoAngle(uint8_t channel, int angle) { 
   if (channel < 8) {
     int adjustedAngle = constrain(angle + servoSubtrim[channel], 0, 180);
+#if USE_PCA9685
+    // Same 0-180 -> 732-2929 us range as the ESP32Servo attach() above.
+    pca.writeMicroseconds(pcaChannels[channel], map(adjustedAngle, 0, 180, 732, 2929));
+#else
     servos[channel].write(adjustedAngle);
+#endif
     delayWithFace(motorCurrentDelay);
   }
 }

@@ -42,6 +42,7 @@ This document provides technical information on the firmware architecture, contr
 - `ESP32Servo` **v3.0.9** (recommended)
 - `Adafruit SSD1306`
 - `Adafruit GFX Library`
+- `Adafruit PWM Servo Driver Library` (only for the optional PCA9685 build, `-DUSE_PCA9685=1`)
 
 > [!IMPORTANT]
 > Use **ESP32Servo v3.0.9** for this project. Newer releases currently have a known issue where writing to one servo can affect multiple channels ([madhephaestus/ESP32Servo#103](https://github.com/madhephaestus/ESP32Servo/issues/103)).
@@ -183,6 +184,7 @@ The firmware is built on the Arduino-ESP32 framework. Currently the firmware is 
 - **Libraries**:
   - `ESP32Servo` **v3.0.9**: Low-level PWM timer management. (Pinned due to known multi-servo command leak in newer versions: [madhephaestus/ESP32Servo#103](https://github.com/madhephaestus/ESP32Servo/issues/103))
   - `Adafruit_SSD1306` & `Adafruit_GFX`: Buffer-based OLED rendering.
+  - `Adafruit_PWMServoDriver` (optional): PCA9685 servo driver, only with `-DUSE_PCA9685=1`.
   - `ESPmDNS`: mDNS service discovery (included with ESP32 board support).
   - `DNSServer`: Captive portal DNS redirection (included with ESP32 board support).
   - `WebServer`: HTTP server implementation (included with ESP32 board support).
@@ -871,6 +873,21 @@ Pins left free on purpose: IO1 (A1, battery sense through the MSR jumper; the sc
 > The Glyph's 3V3 regulator gives about 900 mA peak, which is not enough for 8
 > servos. Power the servos from a separate 5 V supply and join its ground to the
 > Glyph's GND.
+
+#### PCA9685 servo driver variant (Glyph or any board)
+
+Build with `-DUSE_PCA9685=1` (or set `USE_PCA9685` to 1 at the top of the sketch) to drive the servos from a PCA9685 16-channel, 12-bit I2C servo board instead of ESP32 GPIO PWM. It needs the `Adafruit PWM Servo Driver Library`. The PCA9685 sits on the board's I2C pins (on the Glyph, SDA = IO4 and SCL = IO5, or the Glink connector) at address `0x40`, and the SSD1306 (`0x3C`) can share the same bus. Servo index *i* goes to channel `pcaChannels[i]`. Poses, gaits, subtrim and the stagger delay don't change, and the same 732–2929 µs pulse range is used. ESP32 PWM timers aren't used for the servos, so adding other PWM devices no longer risks running out of timers.
+
+| Motor/Component | Array Index | PCA9685 Channel | Notes |
+| --------------- | ----------- | --------------- | ----- |
+| Motor 0 – 7     | 0 – 7       | CH0 – CH7       | R1, R2, L1, L2, R4, R3, L3, L4 in that order |
+| Spare           | -           | CH8 – CH15      | Free for more servos or LEDs |
+| **SDA / SCL**   | -           | SDA / SCL       | Glyph SDA (IO4) / SCL (IO5) |
+| **VCC**         | -           | VCC             | Logic power from the Glyph's 3V3 |
+| **V+**          | -           | V+ screw terminal | Servo power from a separate 5–6 V supply, not the Glyph |
+| GND             | -           | GND             | Shared by the Glyph, the PCA9685 and the servo supply |
+
+On the Glyph this works with either face: the default head link (UART1 on IO17/IO18) or `-DGLYPH_HEAD_LINK=0` for the OLED on the same I2C bus. Every GPIO that held a servo (IO6–IO10, IO13–IO15) becomes free. The firmware prints `PCA9685 not found at 0x40` on the Serial Monitor if the board doesn't answer. If every servo is off by the same amount, trim `PCA9685_OSC_HZ` (default 27 MHz).
 
 ### Porting to Other ESP32 Variants
 
