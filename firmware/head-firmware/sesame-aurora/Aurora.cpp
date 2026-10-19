@@ -66,7 +66,7 @@ static uint16_t wifiOffMinutes=0;
 static uint32_t noPhoneSince=0;
 static bool wifiOn=false;
 static void startWifi();
-static bool validWifiOff(int m){return m==0||m==5||m==10||m==15||m==30||m==60;}
+static bool validWifiOff(int m){return m==0||m==1||m==3||m==5;}
 static void saveWifiOff(int m){wifiOffMinutes=m;noPhoneSince=millis();Preferences prefs;prefs.begin("aurora",false);prefs.putUShort("wifiOff",m);prefs.end();}
 // The cold-start workaround restarts the chip, which hides why it really
 // started. Keep the first reason across that restart, in RTC memory.
@@ -375,7 +375,7 @@ void auroraSetup(){
   readBattery();
   Serial.printf("Started by: %s (brownouts so far: %lu). Battery %d mV, %d%%%s\n",resetName(startReason),(unsigned long)brownouts,(int)batteryMv,batteryPercent,charging?", charging":"");
   touchReady=initPeripherals();initWeb();fpsAt=millis();chirp(1);
-  Serial.println("Aurora ready. Tap=love, double-tap=body trick, swipe=pet, hold=calm/stop, BOOT=showcase. USB: ?, SNAP, SHOW, FOLLOW, BODY:0|1, WIFI:ON, WIFIOFF:0|5|10|15|30|60, PET:0..2, CHIRP, F:happy, M:crab");
+  Serial.println("Aurora ready. Tap=love, double-tap=body trick, swipe=pet, hold=calm/stop, BOOT=showcase. USB: ?, SNAP, SHOW, FOLLOW, BODY:0|1, WIFI:ON, WIFIOFF:0|1|3|5, PET:0..2, CHIRP, F:happy, M:crab");
 }
 void auroraLoop(){
   bodyReader.poll();usb.poll();server.handleClient();
