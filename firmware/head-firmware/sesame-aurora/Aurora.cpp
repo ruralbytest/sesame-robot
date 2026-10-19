@@ -2,6 +2,8 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <Preferences.h>
+#include <esp_attr.h>
 #include <driver/spi_master.h>
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
@@ -36,6 +38,18 @@ static bool bodyControl=true;
 static const char* const TRICKS[]={"wave","bow","dance","cute","point","shrug"};
 static uint8_t nextTrick=0;
 static uint32_t commandSentAt=0,commandsSent=0;
+// Battery: GPIO4 reads half the cell voltage; GPIO7 (ETA6098 STAT) is low
+// while charging. Pins from Waveshare's 01_ADC_Test example.
+static constexpr int BATTERY_ADC_PIN=4,CHARGE_STAT_PIN=7;
+static float batteryMv=0;
+static int batteryLowestMv=0,batteryPercent=-1;
+static bool charging=false;
+// The cold-start workaround restarts the chip, which hides why it really
+// started. Keep the first reason across that restart, in RTC memory.
+RTC_NOINIT_ATTR static uint32_t savedResetReason,savedResetMagic;
+static constexpr uint32_t RESET_MAGIC=0x5E5A3E01;
+static esp_reset_reason_t startReason=ESP_RST_UNKNOWN;
+static uint32_t brownouts=0;
 
 static const sh8601_lcd_init_cmd_t initCmds[]={
   {0xFE,(uint8_t[]){0},1,0},{0xC4,(uint8_t[]){0x80},1,0},
@@ -89,6 +103,32 @@ static Mood faceMood(String s){
   return CURIOUS;
 }
 static bool isFuture(uint32_t deadline){return (int32_t)(deadline-millis())>0;}
+static const char* resetName(esp_reset_reason_t r){
+  switch(r){
+    case ESP_RST_POWERON:return "power on";case ESP_RST_BROWNOUT:return "brownout";case ESP_RST_SW:return "restart";
+    case ESP_RST_PANIC:return "crash";case ESP_RST_INT_WDT:case ESP_RST_TASK_WDT:case ESP_RST_WDT:return "watchdog";
+    case ESP_RST_EXT:return "reset pin";case ESP_RST_USB:return "USB reset";case ESP_RST_DEEPSLEEP:return "deep sleep";default:return "unknown";
+  }
+}
+// Typical single-cell LiPo resting curve. Under load it reads a little low.
+static int lipoPercent(float mv){
+  static const int16_t mvAt[]={3300,3500,3600,3700,3750,3800,3850,3900,4000,4100,4200};
+  static const int8_t pct[]={0,3,10,25,35,45,55,62,78,90,100};
+  if(mv<=mvAt[0])return 0;
+  for(int i=1;i<11;i++)if(mv<mvAt[i])return pct[i-1]+(int)((pct[i]-pct[i-1])*(mv-mvAt[i-1])/(mvAt[i]-mvAt[i-1]));
+  return 100;
+}
+static void readBattery(){
+  uint32_t sum=0;for(int i=0;i<16;i++)sum+=analogReadMilliVolts(BATTERY_ADC_PIN);
+  float mv=sum/16.f*2;
+  charging=digitalRead(CHARGE_STAT_PIN)==LOW;
+  if(mv<2500){batteryPercent=-1;batteryMv=mv;return;} // no battery or no reading
+  batteryMv=batteryMv<2500?mv:batteryMv*.8f+mv*.2f;
+  if(!batteryLowestMv||mv<batteryLowestMv)batteryLowestMv=(int)mv;
+  int p=lipoPercent(batteryMv);
+  // Hysteresis: load spikes should not make the number flicker.
+  if(batteryPercent<0||abs(p-batteryPercent)>=2)batteryPercent=p;
+}
 static void preview(Mood m,uint32_t duration=10000){manualMood=m;manualMove=NO_MOVE;manualUntil=millis()+duration;}
 static void previewMove(Move m,uint32_t duration=10000){manualMove=m;manualUntil=millis()+duration;}
 static void startBodyMove(Move m){
@@ -113,8 +153,8 @@ static void sendBody(const char* cmd){
   Serial.printf("To body: C:%s\n",cmd);
 }
 static String status(){
-  char b[700];snprintf(b,sizeof(b),"{\"mood\":\"%s\",\"move\":\"%s\",\"character\":%d,\"fps\":%.1f,\"energy\":%.3f,\"rawMic\":%.5f,\"mic\":%s,\"speaker\":%s,\"touch\":%s,\"link\":%s,\"bodyLines\":%lu,\"uartBytes\":%lu,\"touches\":%lu,\"reactions\":%lu,\"audioBlocks\":%lu,\"audioErrors\":%lu,\"sound\":%s,\"react\":%s,\"show\":%s,\"bodyControl\":%s,\"commandsSent\":%lu,\"heap\":%u}",
-    moodName(scene.mood),scene.move!=NO_MOVE?moveLabel(scene.move):"",scene.character,framesPerSecond,energy,micLevel.load(),micReady?"true":"false",speakerReady?"true":"false",touchReady?"true":"false",bodyLinked()?"true":"false",(unsigned long)bodyLines,(unsigned long)uartBytes,(unsigned long)touchCount,(unsigned long)soundReactions,(unsigned long)audioBlocks.load(),(unsigned long)audioErrors.load(),soundEnabled?"true":"false",reactEnabled?"true":"false",showcase?"true":"false",bodyControl?"true":"false",(unsigned long)commandsSent,ESP.getFreeHeap());
+  char b[900];snprintf(b,sizeof(b),"{\"mood\":\"%s\",\"move\":\"%s\",\"character\":%d,\"fps\":%.1f,\"energy\":%.3f,\"rawMic\":%.5f,\"mic\":%s,\"speaker\":%s,\"touch\":%s,\"link\":%s,\"bodyLines\":%lu,\"uartBytes\":%lu,\"touches\":%lu,\"reactions\":%lu,\"audioBlocks\":%lu,\"audioErrors\":%lu,\"sound\":%s,\"react\":%s,\"show\":%s,\"bodyControl\":%s,\"commandsSent\":%lu,\"batteryMv\":%d,\"batteryLowestMv\":%d,\"battery\":%d,\"charging\":%s,\"startReason\":\"%s\",\"brownouts\":%lu,\"uptime\":%lu,\"heap\":%u}",
+    moodName(scene.mood),scene.move!=NO_MOVE?moveLabel(scene.move):"",scene.character,framesPerSecond,energy,micLevel.load(),micReady?"true":"false",speakerReady?"true":"false",touchReady?"true":"false",bodyLinked()?"true":"false",(unsigned long)bodyLines,(unsigned long)uartBytes,(unsigned long)touchCount,(unsigned long)soundReactions,(unsigned long)audioBlocks.load(),(unsigned long)audioErrors.load(),soundEnabled?"true":"false",reactEnabled?"true":"false",showcase?"true":"false",bodyControl?"true":"false",(unsigned long)commandsSent,(int)batteryMv,batteryLowestMv,batteryPercent,charging?"true":"false",resetName(startReason),(unsigned long)brownouts,(unsigned long)(millis()/1000),ESP.getFreeHeap());
   return String(b);
 }
 static void bodyMessage(String line,bool fromUsb){
@@ -237,9 +277,21 @@ static void interactions(){
 void auroraSetup(){
   Serial.begin(115200);Serial1.setRxBufferSize(512);Serial1.begin(115200,SERIAL_8N1,44,43);gpio_pullup_en(GPIO_NUM_44);pinMode(0,INPUT_PULLUP);
   Serial.println("Sesame Aurora v1 starting");
-  esp_reset_reason_t reason=esp_reset_reason();initDisplay();
+  esp_reset_reason_t reason=esp_reset_reason();
+  // After the workaround's own restart, report the reason that came before it.
+  startReason=(reason==ESP_RST_SW&&savedResetMagic==RESET_MAGIC)?(esp_reset_reason_t)savedResetReason:reason;
+  savedResetMagic=0;
+  pinMode(CHARGE_STAT_PIN,INPUT_PULLUP);analogReadResolution(12);analogSetPinAttenuation(BATTERY_ADC_PIN,ADC_11db);
+  initDisplay();
   // Preserve the known working board-specific cold-start reset workaround.
-  if(reason==ESP_RST_POWERON||reason==ESP_RST_BROWNOUT){while(millis()<3000)delay(10);Serial.println("Cold start: one warm restart");Serial.flush();esp_restart();}
+  if(reason==ESP_RST_POWERON||reason==ESP_RST_BROWNOUT){
+    savedResetReason=reason;savedResetMagic=RESET_MAGIC;
+    while(millis()<3000)delay(10);Serial.println("Cold start: one warm restart");Serial.flush();esp_restart();
+  }
+  {Preferences prefs;prefs.begin("aurora",false);brownouts=prefs.getUInt("brownouts",0);
+   if(startReason==ESP_RST_BROWNOUT)prefs.putUInt("brownouts",++brownouts);prefs.end();}
+  readBattery();
+  Serial.printf("Started by: %s (brownouts so far: %lu). Battery %d mV, %d%%%s\n",resetName(startReason),(unsigned long)brownouts,(int)batteryMv,batteryPercent,charging?", charging":"");
   touchReady=initPeripherals();initWeb();fpsAt=millis();chirp(1);
   Serial.println("Aurora ready. Tap=love, double-tap=body trick, swipe=pet, hold=calm/stop, BOOT=showcase. USB: ?, SNAP, SHOW, FOLLOW, BODY:0|1, PET:0..2, CHIRP, F:happy, M:crab");
 }
@@ -261,6 +313,8 @@ void auroraLoop(){
       scene.mood=manual?manualMood:bodyMood;scene.move=manual?manualMove:bodyMove;
     }
     scene.linked=lastBody&&now-lastBody<8000;
+    static uint32_t batteryAt=0;if(now-batteryAt>=2000){batteryAt=now;readBattery();}
+    scene.batteryPercent=batteryPercent;scene.charging=charging;
     scene.draw(now/1000.f);pushFrame();frames++;
     if(now-fpsAt>=2000){framesPerSecond=frames*1000.f/(now-fpsAt);frames=0;fpsAt=now;}
   }

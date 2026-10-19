@@ -1,4 +1,5 @@
 #include "Scene.h"
+#include <stdio.h>
 static constexpr float PI=3.14159265f;
 static uint16_t C(int r,int g,int b){return Painter::rgb(r,g,b);}
 const char* moodName(Mood m){static const char* names[]={"CURIOUS","HAPPY","LOVE","SLEEPY","PARTY","WOW","BRAVE","SAD","THINKING"};return names[(int)m];}
@@ -183,6 +184,26 @@ static void drawExtra(Painter& g,Extra x,float t,float cx,float cy,int character
     default:break;
   }
 }
+// Phone-style battery: outline, fill by charge, percentage, bolt when charging.
+// Sits under the character name. Red at 15% or less, green while charging.
+static void drawBattery(Painter& g,int percent,bool charging){
+  if(percent<0)return;
+  char label[6];snprintf(label,sizeof(label),"%d%%",percent);
+  const int w=24,h=12,gap=5,textW=Painter::textWidth(label,1);
+  int x=233-(w+3+gap+textW)/2,y=58;
+  uint16_t frame=C(190,180,221),fill=charging?C(59,242,179):percent<=15?C(255,80,90):C(225,225,240);
+  g.oval(233,y+h/2,(w+gap+textW)/2+12,h/2+6,C(15,18,36));
+  for(int i=0;i<2;i++){g.span(x,x+w-1,y+i*(h-1),frame);}
+  for(int j=0;j<h;j++){g.pixel(x,y+j,frame);g.pixel(x+w-1,y+j,frame);}
+  for(int j=3;j<h-3;j++)g.span(x+w,x+w+2,y+j,frame);
+  int inner=(w-4)*std::min(100,std::max(0,percent))/100;
+  for(int j=2;j<h-2;j++)if(inner>0)g.span(x+2,x+1+inner,y+j,fill);
+  if(charging){
+    uint16_t bolt=C(15,18,36);int bx=x+w/2;
+    g.line(bx+2,y+2,bx-3,y+h/2,2,bolt);g.line(bx-3,y+h/2,bx+3,y+h/2,2,bolt);g.line(bx+3,y+h/2,bx-2,y+h-2,2,bolt);
+  }
+  g.textAt(label,x+w+3+gap,y+(h-7)/2,fill,1);
+}
 void Scene::draw(float t){
   if(cachedCharacter!=character)buildBase();
   auto ink=C(37,21,49),cream=C(255,237,195),white=C(252,252,255),pink=C(255,98,156),cyan=C(55,231,236);
@@ -284,4 +305,5 @@ void Scene::draw(float t){
   g.oval(233,399,64,17,C(15,18,36));g.text(move!=NO_MOVE?moveLabel(move):moodName(mood),393,C(212,212,242),1);
   g.oval(233,428,3,3,linked?C(59,242,179):C(150,99,230));
   g.text(character==0?"AURORA":character==1?"BISCUIT":"NOVA",35,C(190,180,221),2);
+  drawBattery(g,batteryPercent,charging);
 }

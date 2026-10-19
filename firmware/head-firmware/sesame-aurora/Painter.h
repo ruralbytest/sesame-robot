@@ -51,11 +51,21 @@ struct Painter {
     for(int j=0;j<(int)(s*.92f);j++){float half=s*.68f*(1-j/(s*.92f));span((int)(x-half),(int)(x+half),(int)(y+j),c);}
   }
   void star(float x,float y,float r,uint16_t c) { line(x-r,y,x+r,y,2,c);line(x,y-r,x,y+r,2,c);oval(x,y,2.5,2.5,c); }
-  void text(const char* s,int y,uint16_t c,int scale=2) {
-    // Compact uppercase 5x7 glyphs, centered. No font dependency.
+  void text(const char* s,int y,uint16_t c,int scale=2) { textAt(s,(W-(int)strlen(s)*6*scale)/2,y,c,scale); }
+  static int textWidth(const char* s,int scale) { return (int)strlen(s)*6*scale-scale; }
+  void textAt(const char* s,int x,int y,uint16_t c,int scale) {
+    // Compact uppercase 5x7 glyphs, plus digits and '%'. No font dependency.
     static const uint8_t az[][5]={
       {126,9,9,9,126},{127,73,73,73,54},{62,65,65,65,34},{127,65,65,34,28},{127,73,73,73,65},{127,9,9,9,1},{62,65,73,73,122},{127,8,8,8,127},{65,65,127,65,65},{32,64,65,63,1},{127,8,20,34,65},{127,64,64,64,64},{127,2,12,2,127},{127,4,8,16,127},{62,65,65,65,62},{127,9,9,9,6},{62,65,81,33,94},{127,9,25,41,70},{38,73,73,73,50},{1,1,127,1,1},{63,64,64,64,63},{31,32,64,32,31},{63,64,56,64,63},{99,20,8,20,99},{7,8,112,8,7},{97,81,73,69,67}};
-    int x=(W-(int)strlen(s)*6*scale)/2;
-    for(;*s;s++,x+=6*scale){int k=*s-'A';if(k<0||k>25)continue;for(int col=0;col<5;col++)for(int row=0;row<7;row++)if(az[k][col]&(1<<row))for(int sy=0;sy<scale;sy++)span(x+col*scale,x+col*scale+scale-1,y+row*scale+sy,c);}
+    static const uint8_t digits[][5]={
+      {62,81,73,69,62},{0,66,127,64,0},{66,97,81,73,70},{33,65,69,75,49},{24,20,18,127,16},
+      {39,69,69,69,57},{60,74,73,73,48},{1,113,9,5,3},{54,73,73,73,54},{6,73,73,41,30}};
+    static const uint8_t percent[5]={35,19,8,100,98};
+    for(;*s;s++,x+=6*scale){
+      const uint8_t* g=nullptr;
+      if(*s>='A'&&*s<='Z')g=az[*s-'A'];else if(*s>='0'&&*s<='9')g=digits[*s-'0'];else if(*s=='%')g=percent;
+      if(!g)continue;
+      for(int col=0;col<5;col++)for(int row=0;row<7;row++)if(g[col]&(1<<row))for(int sy=0;sy<scale;sy++)span(x+col*scale,x+col*scale+scale-1,y+row*scale+sy,c);
+    }
   }
 };

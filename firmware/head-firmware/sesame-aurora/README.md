@@ -30,6 +30,14 @@ Each of the body's 19 moves has its own expression, badge label and sound: forwa
 
 Faces that are not moves map to moods, each with its own sound (curious, the resting mood, is silent when it comes from the body): wave/walk/happy → happy; rest/sleepy/dead → sleepy; dance/excited/worm/freaky → party; cute/love/bow → love; angry/pushup/crab → brave; point/confused/thinking/shrug → thinking. Unknown names → curious. The old bitmap animation modes are accepted for protocol compatibility; this renderer animates continuous procedural expressions rather than replaying those bitmap frames. A small teal dot at the bottom means a valid body message arrived within eight seconds; violet means standalone.
 
+## Battery
+
+The face shows a phone-style battery icon under the character's name: the percentage, red at 15% or less, green with a bolt while charging. The voltage is read on GPIO4 (half the cell voltage) and the charging state on GPIO7 (ETA6098 STAT, low while charging). The percentage comes from a typical LiPo voltage curve, so it reads a little low while the speaker or Wi-Fi draws current.
+
+The control page and the `?` status show the voltage, the lowest voltage since boot, the charging state, the uptime and why the head last started (`power on`, `brownout`, `crash`, `watchdog`, `USB reset`, ...). The brownout count is kept in flash across restarts. If the head keeps restarting on battery with `brownout` as the reason, the battery can't supply the current peaks: charge it, use a bigger cell, or lower the volume and brightness.
+
+Buttons: **PWR** turns the board on (short press) and off (long press) when it runs on battery. **BOOT** toggles the showcase while running; held while pressing PWR or plugging in USB, it enters upload mode.
+
 ## Audio and privacy
 
 Speaker: ES8311 and PA GPIO46. Dual microphones: ES7210. Uses Waveshare's vendored Espressif codec drivers and official pins. Calls are synthesized, not recorded samples. Sound is analyzed locally for amplitude; there is no speech recognition, LLM integration, recording, audio upload, or cloud service. The web page receives only status and a loudness value. Muting disables audible pet calls; pausing microphone reactions disables their visual/behavioural effect, while the audio input and diagnostic meter remain active.
@@ -49,7 +57,7 @@ The startup order retains the tested clear-before-display-on fix. The original o
 
 ## Serial diagnostics (115200, newline)
 
-- `?`: JSON status, measured fps, UART counters, microphone level, audio errors, touch count, `bodyControl` and `commandsSent`.
+- `?`: JSON status, measured fps, UART counters, microphone level, audio errors, touch count, `bodyControl`, `commandsSent`, battery (`batteryMv`, `batteryLowestMv`, `battery` %, `charging`), `startReason`, `brownouts` and `uptime` (seconds).
 - `F:happy`: show a mood for 10 seconds without moving the body.
 - `M:crab`: show a body move's expression and play its sound for 10 seconds without moving the body.
 - `PET:0`, `PET:1`, `PET:2`: lion, puppy, robot.

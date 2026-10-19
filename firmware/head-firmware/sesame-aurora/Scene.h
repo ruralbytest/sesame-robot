@@ -14,6 +14,8 @@ struct Scene {
   Move move=NO_MOVE; // when set, the move's expression replaces the mood's
   float energy=0,gazeX=0,gazeY=0;
   bool linked=false;
+  int batteryPercent=-1; // -1 hides the battery icon
+  bool charging=false;
   void prepare();
   void buildBase();
   void draw(float seconds);
