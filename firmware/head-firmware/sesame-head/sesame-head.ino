@@ -125,6 +125,65 @@ FaceAnimMode faceMode = FACE_ANIM_LOOP;
 int faceFps = DEFAULT_FACE_FPS;
 unsigned long lastFrameMs = 0;
 
+// ====== BOOT LOG ======
+// Kept in RTC memory, which survives every reset except power-off. Opening
+// the USB port resets the chip, so this is the only way to see what happened
+// before connecting: why each boot started, how far it got, how long it ran.
+enum BootStage : uint8_t {
+  STAGE_SETUP = 1, STAGE_BUFFERS, STAGE_SPI, STAGE_PANEL_RESET, STAGE_PANEL_INIT,
+  STAGE_CLEARED, STAGE_FACE, STAGE_LOOP
+};
+static const char* const stageNames[] = {
+  "?", "setup", "buffers", "spi bus", "panel reset", "panel init", "cleared", "face drawn", "loop"
+};
+// regs: panel registers read back last (power mode 0Ah, MADCTL 0Bh, pixel format 0Ch, ID DAh)
+struct BootEntry { uint8_t reason; uint8_t stage; uint16_t seconds; uint8_t setups; uint8_t regs[4]; };
+static const int BOOT_LOG_SIZE = 8;
+struct BootLog { uint32_t magic; uint32_t count; BootEntry e[BOOT_LOG_SIZE]; };
+RTC_NOINIT_ATTR BootLog bootLog;
+static const uint32_t BOOT_LOG_MAGIC = 0x5E5A4D01;
+
+const char* resetReasonText(esp_reset_reason_t r) {
+  switch (r) {
+    case ESP_RST_POWERON:  return "power-on";
+    case ESP_RST_SW:       return "software";
+    case ESP_RST_PANIC:    return "crash";
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT:      return "watchdog";
+    case ESP_RST_BROWNOUT: return "brownout (supply dipped)";
+    case ESP_RST_USB:      return "USB";
+    default:               return "other";
+  }
+}
+
+BootEntry& thisBoot() { return bootLog.e[(bootLog.count - 1) % BOOT_LOG_SIZE]; }
+// Takes uint8_t because Arduino's auto-generated prototypes can't see BootStage.
+void markStage(uint8_t s) { if (thisBoot().stage < s) thisBoot().stage = s; }
+
+void startBootLog() {
+  esp_reset_reason_t r = esp_reset_reason();
+  if (r == ESP_RST_POWERON || bootLog.magic != BOOT_LOG_MAGIC || bootLog.count > 100000) {
+    memset(&bootLog, 0, sizeof(bootLog));
+    bootLog.magic = BOOT_LOG_MAGIC;
+  }
+  bootLog.count++;
+  thisBoot() = { (uint8_t)r, 0, 0, 0, { 0, 0, 0, 0 } };
+  markStage(STAGE_SETUP);
+}
+
+void printBootLog() {
+  uint32_t n = bootLog.count, first = n > BOOT_LOG_SIZE ? n - BOOT_LOG_SIZE : 0;
+  Serial.printf("Boots since power-on: %lu (oldest first)\n", (unsigned long)n);
+  for (uint32_t i = first; i < n; i++) {
+    const BootEntry& b = bootLog.e[i % BOOT_LOG_SIZE];
+    Serial.printf("  #%lu  started by %-26s reached %-12s ran %us  screen setups %u  regs %02X %02X %02X %02X\n",
+                  (unsigned long)(i + 1), resetReasonText((esp_reset_reason_t)b.reason),
+                  stageNames[b.stage < 9 ? b.stage : 0], b.seconds, b.setups,
+                  b.regs[0], b.regs[1], b.regs[2], b.regs[3]);
+  }
+}
+
 // ====== DISPLAY ======
 // Init sequence from Waveshare's demo for this panel.
 static const sh8601_lcd_init_cmd_t lcdInitCmds[] = {
@@ -138,8 +197,8 @@ static const sh8601_lcd_init_cmd_t lcdInitCmds[] = {
   { 0x63, (uint8_t[]){ 0xFF }, 1, 0 },
   { 0x2A, (uint8_t[]){ 0x00, 0x06, 0x01, 0xD7 }, 4, 0 },
   { 0x2B, (uint8_t[]){ 0x00, 0x00, 0x01, 0xD1 }, 4, 0 },
-  { 0x11, (uint8_t[]){ 0x00 }, 0, 100 }, // sleep out
-  { 0x29, (uint8_t[]){ 0x00 }, 0, 0 },   // display on
+  { 0x11, (uint8_t[]){ 0x00 }, 0, 150 }, // sleep out (panel needs at least 120 ms)
+  // Keep the display off until its frame memory has been cleared.
 };
 
 static bool IRAM_ATTR onColorTransDone(esp_lcd_panel_io_handle_t, esp_lcd_panel_io_event_data_t*, void*) {
@@ -160,6 +219,18 @@ static inline uint16_t panelColor(uint16_t c) { return (uint16_t)((c >> 8) | (c 
 void setBrightness(int percent) {
   uint8_t level = (uint8_t)(constrain(percent, 0, 100) * 255 / 100);
   esp_lcd_panel_io_tx_param(panelIo, (0x02 << 24) | (0x51 << 8), &level, 1);
+}
+
+// Read one register byte back (QSPI read opcode 03h). Diagnostic only.
+uint8_t readPanelReg(uint8_t reg) {
+  uint8_t v = 0;
+  esp_lcd_panel_io_rx_param(panelIo, (0x03 << 24) | (reg << 8), &v, 1);
+  return v;
+}
+
+void readPanelRegs(uint8_t* out) {
+  static const uint8_t regs[4] = { 0x0A, 0x0B, 0x0C, 0xDA };
+  for (int i = 0; i < 4; i++) out[i] = readPanelReg(regs[i]);
 }
 
 void clearScreen() {
@@ -194,8 +265,14 @@ void drawFaceBitmap(const unsigned char* bitmap) {
 }
 
 void initDisplay() {
+  // On a cold power-up the AMOLED's supply is still rising when the chip
+  // starts. Setting the panel up too early leaves the screen black until the
+  // next reset, so wait as long as Waveshare's own demo does (2 s).
+  delay(2000);
+
   flushDone = xSemaphoreCreateBinary();
   stripBuf = (uint16_t*)heap_caps_malloc(STRIP_PIXELS * sizeof(uint16_t), MALLOC_CAP_DMA);
+  markStage(STAGE_BUFFERS);
   if (stripBuf == nullptr) {
     Serial.println("Display buffer allocation failed");
     while (true) delay(1000);
@@ -209,6 +286,7 @@ void initDisplay() {
   bus.data3_io_num = LCD_D3;
   bus.max_transfer_sz = STRIP_PIXELS * sizeof(uint16_t);
   ESP_ERROR_CHECK(spi_bus_initialize(LCD_HOST, &bus, SPI_DMA_CH_AUTO));
+  markStage(STAGE_SPI);
 
   esp_lcd_panel_io_spi_config_t io = {};
   io.cs_gpio_num = LCD_CS;
@@ -233,11 +311,21 @@ void initDisplay() {
   dev.bits_per_pixel = 16;
   dev.vendor_config = &vendor;
   ESP_ERROR_CHECK(esp_lcd_new_panel_sh8601(panelIo, &dev, &panel));
-  ESP_ERROR_CHECK(esp_lcd_panel_reset(panel));
-  ESP_ERROR_CHECK(esp_lcd_panel_init(panel));
-  ESP_ERROR_CHECK(esp_lcd_panel_set_gap(panel, LCD_X_GAP, 0));
+  startPanel();
+}
 
+// Hardware-reset the panel and send its setup commands. Safe to call again.
+void startPanel() {
+  thisBoot().setups++;
+  ESP_ERROR_CHECK(esp_lcd_panel_reset(panel));
+  markStage(STAGE_PANEL_RESET);
+  ESP_ERROR_CHECK(esp_lcd_panel_init(panel));
+  markStage(STAGE_PANEL_INIT);
+  ESP_ERROR_CHECK(esp_lcd_panel_set_gap(panel, LCD_X_GAP, 0));
+  ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel, false));
   clearScreen();
+  markStage(STAGE_CLEARED);
+  ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel, true));
   setBrightness(BRIGHTNESS_PERCENT);
 }
 
@@ -255,10 +343,25 @@ int fpsForFace(const String& name) {
   return DEFAULT_FACE_FPS;
 }
 
-// Unknown names fall back to "default", as on the body.
-void showFace(const String& name, FaceAnimMode mode) {
+// Unknown names fall back to "default", as on the body. Returns the face shown.
+String showFace(const String& name, FaceAnimMode mode) {
   String shown = "default";
   faceFrames = face_defualt_frames;
+  // The default bitmap is optional (weak symbol). Prefer idle if absent,
+  // then any available face, so USB-only startup cannot silently stay blank.
+  if (countFrames(faceFrames, MAX_FACE_FRAMES) == 0) {
+    faceFrames = face_idle_frames;
+    shown = "idle";
+    if (countFrames(faceFrames, MAX_FACE_FRAMES) == 0) {
+      for (const FaceEntry& e : faceEntries) {
+        if (countFrames(e.frames, e.maxFrames) > 0) {
+          faceFrames = e.frames;
+          shown = e.name;
+          break;
+        }
+      }
+    }
+  }
   for (const FaceEntry& e : faceEntries) {
     if (name.equalsIgnoreCase(e.name) && countFrames(e.frames, e.maxFrames) > 0) {
       faceFrames = e.frames;
@@ -274,6 +377,8 @@ void showFace(const String& name, FaceAnimMode mode) {
   faceFps = max(1, fpsForFace(shown));
   lastFrameMs = millis();
   if (faceFrameCount > 0) drawFaceBitmap(faceFrames[0]);
+  markStage(STAGE_FACE);
+  return shown;
 }
 
 void updateAnimation() {
@@ -310,6 +415,25 @@ bool parseMode(const String& s, FaceAnimMode& mode) {
 // Anything that isn't an F: line is ignored: the body's boot log arrives on
 // the same wire at every reset.
 void handleLine(const char* line, bool fromUsb) {
+  while (*line == ' ' || *line == '\t') line++;
+  if (fromUsb && strcmp(line, "?") == 0) {
+    Serial.printf("Up %lu ms, face %s\n", millis(), requestedFace.c_str());
+    printBootLog();
+    return;
+  }
+  if (fromUsb && strcmp(line, "D") == 0) {
+    uint8_t r[4];
+    readPanelRegs(r);
+    Serial.printf("Panel regs now: power %02X  madctl %02X  pixfmt %02X  id %02X\n", r[0], r[1], r[2], r[3]);
+    return;
+  }
+  if (fromUsb && strcmp(line, "R") == 0) {
+    startPanel();
+    String face = requestedFace.length() ? requestedFace : String("default");
+    showFace(face, requestedMode);
+    Serial.println("Screen set up again");
+    return;
+  }
   if (strncmp(line, "F:", 2) != 0) {
     if (fromUsb) Serial.println("Type F:<face> or F:<face>,<loop|once|boomerang>");
     return;
@@ -334,8 +458,10 @@ void handleLine(const char* line, bool fromUsb) {
   if (name == requestedFace && mode == requestedMode) return;
   requestedFace = name;
   requestedMode = mode;
-  showFace(name, mode);
-  Serial.printf("Face: %s (%s)\n", name.c_str(), modeText.length() ? modeText.c_str() : "loop");
+  String shown = showFace(name, mode);
+  static const char* const modeNames[] = { "loop", "once", "boomerang" };
+  if (shown.equalsIgnoreCase(name)) Serial.printf("Face: %s (%s)\n", shown.c_str(), modeNames[mode]);
+  else Serial.printf("Face: %s (%s), unknown name \"%s\"\n", shown.c_str(), modeNames[mode], name.c_str());
 }
 
 struct LineReader {
@@ -367,12 +493,31 @@ struct LineReader {
 LineReader usbReader = { Serial, true, {}, 0, false };
 LineReader linkReader = { Serial1, false, {}, 0, false };
 
+// ====== COLD-START RESTART ======
+// After a cold power-up the panel ignores every setup, even repeated ones, but
+// comes up fine after any chip reset (seen in the boot log: no crash, three
+// setups, still black). So after a power-on, restart the chip once.
+bool coldStartRestart = false;
+
+void runColdStartRestart() {
+  if (coldStartRestart && millis() > 3000) {
+    Serial.println("Cold start: restarting once so the screen comes up");
+    Serial.flush();
+    esp_restart();
+  }
+}
+
 // ====== MAIN ======
 void setup() {
   Serial.begin(115200);
   Serial1.begin(LINK_BAUD, SERIAL_8N1, LINK_RX, LINK_TX);
+  gpio_pullup_en((gpio_num_t)LINK_RX);  // keep RX idle-high when the body isn't connected
+  esp_reset_reason_t reason = esp_reset_reason();
+  startBootLog();
   initDisplay();
-  showFace("default", FACE_ANIM_LOOP);  // until the body says otherwise
+  coldStartRestart = (reason == ESP_RST_POWERON || reason == ESP_RST_BROWNOUT);
+  String startupFace = showFace("default", FACE_ANIM_LOOP);  // standalone until the body sends a face
+  Serial.printf("Startup face: %s, frames: %u\n", startupFace.c_str(), faceFrameCount);
   Serial.println("Sesame head ready. Type F:<face> to test.");
 }
 
@@ -380,5 +525,16 @@ void loop() {
   linkReader.poll();
   usbReader.poll();
   updateAnimation();
+  runColdStartRestart();
+  markStage(STAGE_LOOP);
+  thisBoot().seconds = (uint16_t)min(millis() / 1000UL, 65535UL);
+
+  // Re-send the brightness every 2 s, as Waveshare's demo does. After a cold
+  // power-up the panel can drop the first one and stay dark otherwise.
+  static unsigned long lastBrightnessMs = 0;
+  if (millis() - lastBrightnessMs >= 2000) {
+    lastBrightnessMs = millis();
+    setBrightness(BRIGHTNESS_PERCENT);
+  }
   delay(2);
 }
