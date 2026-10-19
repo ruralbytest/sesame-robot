@@ -20,6 +20,13 @@ static SemaphoreHandle_t flushDone=nullptr;
 // Two strip buffers: while one strip is being sent, the next is prepared.
 static uint16_t* dmaBuf[2]={nullptr,nullptr};
 static constexpr int ROWS=24;
+// Two whole frames in PSRAM: the main loop (core 1) draws one while the
+// screen task (core 0) sends the other, so drawing and sending overlap.
+static uint16_t* frameBuf[2]={nullptr,nullptr};
+static uint16_t* volatile sendingFrame=nullptr; // handed to the screen task
+static uint16_t* volatile shownFrame=nullptr;   // last finished frame, for SNAP
+static SemaphoreHandle_t frameReady=nullptr,screenIdle=nullptr;
+static TaskHandle_t screenTask=nullptr;
 static bool touchReady=false,showcase=false,reactEnabled=true,apReady=false;
 static uint32_t lastBody=0,bodyLines=0,uartBytes=0,touchCount=0,soundReactions=0;
 static String bodyFace="idle",bodyMode="loop";
@@ -75,24 +82,44 @@ static void brightness(int percent){uint8_t b=constrain(percent,0,100)*255/100;E
 static void waitFlush(){
   if(xSemaphoreTake(flushDone,pdMS_TO_TICKS(1000))!=pdTRUE){Serial.println("Display transfer timeout");esp_restart();}
 }
-static void pushFrame(){
+static void pushFrame(const uint16_t* frame){
   int inFlight=0,k=0;
   for(int y=0;y<466;y+=ROWS,k^=1){
     // Strips finish in order, so with two in flight the older one used dmaBuf[k].
     if(inFlight==2){waitFlush();inFlight--;}
-    int h=std::min(ROWS,466-y),n=466*h;const uint16_t* src=scene.g.p+y*466;uint16_t* dst=dmaBuf[k];
+    int h=std::min(ROWS,466-y),n=466*h;const uint16_t* src=frame+y*466;uint16_t* dst=dmaBuf[k];
     for(int i=0;i<n;i++)dst[i]=(src[i]<<8)|(src[i]>>8);
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,y,466,y+h,dst));inFlight++;
   }
   while(inFlight){waitFlush();inFlight--;}
 }
+// Core 0: send each finished frame. Only this task talks to the screen once
+// it starts, so the brightness refresh lives here too.
+static void screenLoop(void*){
+  uint32_t brightAt=millis();
+  for(;;){
+    xSemaphoreTake(frameReady,portMAX_DELAY);
+    pushFrame(sendingFrame);shownFrame=sendingFrame;
+    if(millis()-brightAt>2000){brightAt=millis();brightness(65);}
+    xSemaphoreGive(screenIdle);
+  }
+}
+// Core 1: hand the frame just drawn to the screen task, then switch drawing
+// to the other buffer. Waits only if the previous frame is still being sent.
+static void showFrame(){
+  xSemaphoreTake(screenIdle,portMAX_DELAY);
+  sendingFrame=scene.g.p;xSemaphoreGive(frameReady);
+  scene.g.p=scene.g.p==frameBuf[0]?frameBuf[1]:frameBuf[0];
+}
 static void initDisplay(){
   delay(2000);flushDone=xSemaphoreCreateCounting(2,0); // one count per finished strip
-  scene.g.p=(uint16_t*)heap_caps_malloc(466*466*2,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+  frameReady=xSemaphoreCreateBinary();screenIdle=xSemaphoreCreateBinary();
+  for(auto& f:frameBuf)f=(uint16_t*)heap_caps_malloc(466*466*2,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+  scene.g.p=frameBuf[0];
   scene.background=(uint16_t*)heap_caps_malloc(466*466*2,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
   scene.base=(uint16_t*)heap_caps_malloc(466*466*2,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
   for(auto& b:dmaBuf)b=(uint16_t*)heap_caps_malloc(466*ROWS*2,MALLOC_CAP_DMA|MALLOC_CAP_INTERNAL);
-  if(!scene.g.p||!scene.background||!scene.base||!dmaBuf[0]||!dmaBuf[1]||!flushDone){Serial.println("ERROR: enable OPI PSRAM in board settings");while(true)delay(1000);}
+  if(!frameBuf[0]||!frameBuf[1]||!scene.background||!scene.base||!dmaBuf[0]||!dmaBuf[1]||!flushDone||!frameReady||!screenIdle){Serial.println("ERROR: enable OPI PSRAM in board settings");while(true)delay(1000);}
   spi_bus_config_t bus={};bus.sclk_io_num=14;bus.data0_io_num=9;bus.data1_io_num=10;bus.data2_io_num=11;bus.data3_io_num=12;bus.max_transfer_sz=466*ROWS*2;
   ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST,&bus,SPI_DMA_CH_AUTO));
   esp_lcd_panel_io_spi_config_t io={};io.cs_gpio_num=15;io.dc_gpio_num=-1;io.spi_mode=0;io.pclk_hz=40000000;io.trans_queue_depth=2;io.on_color_trans_done=flushed;io.lcd_cmd_bits=32;io.lcd_param_bits=8;io.flags.quad_mode=true;
@@ -102,8 +129,11 @@ static void initDisplay(){
   ESP_ERROR_CHECK(esp_lcd_new_panel_sh8601(panelIo,&dev,&panel));
   ESP_ERROR_CHECK(esp_lcd_panel_reset(panel));ESP_ERROR_CHECK(esp_lcd_panel_init(panel));ESP_ERROR_CHECK(esp_lcd_panel_set_gap(panel,8,0));
   ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel,false));
-  scene.prepare();scene.draw(1);pushFrame(); // fully painted before display-on
+  scene.prepare();scene.draw(1);pushFrame(scene.g.p);shownFrame=scene.g.p; // fully painted before display-on
   ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel,true));brightness(65);
+  scene.g.p=frameBuf[1];xSemaphoreGive(screenIdle);
+  // Same priority as the audio task; it sleeps while each strip is sent.
+  xTaskCreatePinnedToCore(screenLoop,"screen",4096,nullptr,2,&screenTask,0);
 }
 static Mood faceMood(String s){
   s.toLowerCase();s.replace("talk_","");
@@ -186,7 +216,7 @@ static String status(){
 static void bodyMessage(String line,bool fromUsb){
   line.trim();
   if(line=="?"&&fromUsb){Serial.println(status());return;}
-  if(line=="SNAP"&&fromUsb){Serial.printf("SNAP %u\n",466*466*2);Serial.write((const uint8_t*)scene.g.p,466*466*2);Serial.flush();return;}
+  if(line=="SNAP"&&fromUsb){Serial.printf("SNAP %u\n",466*466*2);Serial.write((const uint8_t*)shownFrame,466*466*2);Serial.flush();return;}
   if(line=="SHOW"&&fromUsb){showcase=true;showStart=millis();return;}
   if(line=="FOLLOW"&&fromUsb){showcase=false;manualUntil=0;return;}
   if(line=="CHIRP"&&fromUsb){chirp(1);return;}
@@ -340,9 +370,8 @@ void auroraLoop(){
     scene.linked=lastBody&&now-lastBody<8000;
     static uint32_t batteryAt=0;if(now-batteryAt>=2000){batteryAt=now;readBattery();}
     scene.batteryPercent=batteryFitted?batteryPercent:-1;scene.charging=charging;
-    scene.draw(now/1000.f);pushFrame();frames++;
+    scene.draw(now/1000.f);showFrame();frames++;
     if(now-fpsAt>=2000){framesPerSecond=frames*1000.f/(now-fpsAt);frames=0;fpsAt=now;}
   }
-  static uint32_t brightAt=0;if(now-brightAt>2000){brightAt=now;brightness(65);}
   delay(1);
 }
