@@ -56,7 +56,7 @@
 // channel pcaChannels[i]; channels 8-15 stay free. The OLED (0x3C) can share
 // the bus. Needs the "Adafruit PWM Servo Driver Library".
 #ifndef USE_PCA9685
-#define USE_PCA9685 0
+#define USE_PCA9685 1
 #endif
 #define PCA9685_ADDR 0x40
 // Real PCA9685 oscillators run near 27 MHz, not the nominal 25 MHz; trim

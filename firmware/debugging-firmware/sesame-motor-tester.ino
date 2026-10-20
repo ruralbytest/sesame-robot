@@ -9,7 +9,14 @@ Servo servos[8];
 
 // Motor Pin Mapping
 // Index: 0  1  2  3  4   5   6   7
+#if defined(ARDUINO_PCBCUPID_GLYPH_S3) || defined(ARDUINO_PCBCUPID_GLYPH_S3_PSRAM)
+// PCBCupid Glyph ESP32-S3 (auto-selected, matches sesame-firmware-main.ino):
+//   R1=IO6  R2=IO7  L1=IO8  L2=IO9  R4=IO10  R3=IO13  L3=IO14  L4=IO15
+const int servoPins[8] = {6, 7, 8, 9, 10, 13, 14, 15};
+#else
+// Lolin S2 Mini pins (default)
 const int servoPins[8] = {1, 2, 4, 6, 8, 10, 13, 14};
+#endif
 // Distro board V3 pins: (uncomment if needed)
 // const int servoPins[8] = {4, 5, 6, 7, 10, 11, 12, 13};
 // Distro board V2 pins: (uncomment if needed)
