@@ -15,7 +15,7 @@
 // gait works unchanged toward the new front. Re-check subtrims after
 // switching. 0 = the original orientation (kept as the backup).
 #if defined(ARDUINO_XIAO_ESP32S3) && !defined(XIAO_REVERSE_BODY)
-#define XIAO_REVERSE_BODY 0
+#define XIAO_REVERSE_BODY 1
 #endif
 
 // --- PCBCupid Glyph ESP32-S3 head link ---

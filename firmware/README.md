@@ -841,7 +841,7 @@ The body sends `F:` lines only when the face or mode changes, and repeats the la
 
 ##### Reversed body (`XIAO_REVERSE_BODY=1`)
 
-To swap the robot's front and rear (head moved to the old rear end), build with `-DXIAO_REVERSE_BODY=1` or set `XIAO_REVERSE_BODY` to 1 at the top of the sketch. Nothing is rewired: each servo takes over the role of the servo diagonally across from it (R1↔L2, R2↔L1, R3↔L4, R4↔L3), which uses the same angles, so every pose works unchanged. Re-check subtrims after switching. The default (0) keeps the original orientation.
+XIAO builds swap the robot's front and rear by default (`XIAO_REVERSE_BODY` is 1, head moved to the old rear end). Nothing is rewired: each servo takes over the role of the servo diagonally across from it (R1↔L2, R2↔L1, R3↔L4, R4↔L3), which uses the same angles, so every pose works unchanged. For the original orientation, build with `-DXIAO_REVERSE_BODY=0` or set it to 0 at the top of the sketch. Re-check subtrims after switching.
 
 | Role | R1 | R2 | L1 | L2 | R4 | R3 | L3 | L4 |
 | ---- | -- | -- | -- | -- | -- | -- | -- | -- |

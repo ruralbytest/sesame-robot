@@ -26,9 +26,9 @@
 
 #include <ESP32Servo.h>
 
-// Set to 1 to match XIAO_REVERSE_BODY=1 in the main firmware (front and rear
-// swapped, same wiring, roles swapped diagonally).
-#define XIAO_REVERSE_BODY 0
+// Keep this equal to XIAO_REVERSE_BODY in the main firmware (default 1:
+// front and rear swapped, same wiring, roles swapped diagonally).
+#define XIAO_REVERSE_BODY 1
 
 const char* servoLabels[8] = { "R1", "R2", "L1", "L2", "R4", "R3", "L3", "L4" };
 #if XIAO_REVERSE_BODY
