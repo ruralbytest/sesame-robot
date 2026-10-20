@@ -62,6 +62,9 @@
 // Real PCA9685 oscillators run near 27 MHz, not the nominal 25 MHz; trim
 // this if servo angles are off on every channel by the same amount.
 #define PCA9685_OSC_HZ 27000000
+// Longest pulse sent to any servo. Some servos (the knees on at least one
+// build) ignore anything above ~2400 us, so 175-180 deg never moved.
+#define PCA_SERVO_MAX_US 2400
 
 #include <WiFi.h>
 #include <WebServer.h>
@@ -248,6 +251,7 @@ int8_t servoSubtrim[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 int frameDelay = 100;
 int walkCycles = 10;
 int motorCurrentDelay = 20; // ms delay between motor movements to prevent over-current
+bool servoLogEnabled = false; // Serial "log" toggle: print every servo write
 
 struct FaceEntry {
   const char* name;
@@ -484,6 +488,7 @@ void handleCommandWeb() {
   // We send 200 OK immediately so the web browser doesn't hang waiting for animation to finish
   if (server.hasArg("pose")) {
     currentCommand = server.arg("pose");
+    if (servoLogEnabled) Serial.printf("[web] t=%lu pose=%s\n", millis(), currentCommand.c_str());
     recordInput();
     exitIdle();
     server.send(200, "text/plain", "OK"); 
@@ -1011,7 +1016,7 @@ void setup() {
 
   for (int i = 0; i < 8; i++) {
     servos[i].setPeriodHertz(50);
-    // Map 0-180 to approx 732-2929us
+    // Map 0-180 to approx 732-2929us (ESP32Servo clamps the max to 2500us)
     servos[i].attach(servoPins[i], 732, 2929);
   }
 #endif
@@ -1138,6 +1143,26 @@ void loop() {
             }
           }
         }
+        else if (strcmp(command_buffer, "log") == 0) {
+          servoLogEnabled = !servoLogEnabled;
+          Serial.print("Servo log "); Serial.println(servoLogEnabled ? "on" : "off");
+        }
+#if USE_PCA9685
+        else if (strcmp(command_buffer, "pca") == 0) {
+          // Dump the chip state. A brownout reset shows as prescale 30
+          // (200 Hz default) with every channel off.
+          Wire.beginTransmission(PCA9685_ADDR); Wire.write(0x00); Wire.endTransmission();
+          Wire.requestFrom((uint8_t)PCA9685_ADDR, (uint8_t)1);
+          uint8_t mode1 = Wire.available() ? Wire.read() : 0xFF;
+          Serial.printf("PCA9685 mode1=0x%02X prescale=%u (expect %u)\n",
+                        mode1, pca.readPrescale(),
+                        (unsigned)(PCA9685_OSC_HZ / (4096.0 * 50.0) + 0.5) - 1);
+          for (uint8_t ch = 0; ch < 16; ch++) {
+            uint16_t on = pca.getPWM(ch, false), off = pca.getPWM(ch, true);
+            Serial.printf("  ch%u on=%u off=%u\n", ch, on, off);
+          }
+        }
+#endif
         else if (strncmp(command_buffer, "all ", 4) == 0) {
              if (sscanf(command_buffer + 4, "%d", &angle) == 1) {
                  for (int i = 0; i < 8; i++) setServoAngle(i, angle);
@@ -1341,10 +1366,26 @@ void setServoAngle(uint8_t channel, int angle) {
   if (channel < 8) {
     int adjustedAngle = constrain(angle + servoSubtrim[channel], 0, 180);
 #if USE_PCA9685
-    // Same 0-180 -> 732-2929 us range as the ESP32Servo attach() above.
-    pca.writeMicroseconds(pcaChannels[channel], map(adjustedAngle, 0, 180, 732, 2929));
+    // Match what the ESP32Servo build really outputs: attach(732, 2929) is
+    // clamped by the library to MAX_PULSE_WIDTH = 2500 us, so 180 deg is
+    // 2500 us there. Sending 2929 us here left the knees (R3/L4 at 180 in
+    // stand) stalled or rejecting the pulse.
+    // Many hobby servos ignore pulses above ~2400 us (they just hold), so cap
+    // there: 170-180 deg all land on the servo's real end of travel.
+    int us = min(map(adjustedAngle, 0, 180, 732, 2500), (long)PCA_SERVO_MAX_US);
+    pca.writeMicroseconds(pcaChannels[channel], us);
+    if (servoLogEnabled) {
+      // Read the OFF count back from the chip so the log proves what the
+      // PCA9685 is actually outputting, not just what we asked for.
+      uint16_t off = pca.getPWM(pcaChannels[channel], true);
+      Serial.printf("[servo] t=%lu idx %u ch %u angle %d -> %d us (off=%u)\n",
+                    millis(), channel, pcaChannels[channel], adjustedAngle, us, off);
+    }
 #else
     servos[channel].write(adjustedAngle);
+    if (servoLogEnabled) {
+      Serial.printf("[servo] idx %u pin %u angle %d\n", channel, servoPins[channel], adjustedAngle);
+    }
 #endif
     delayWithFace(motorCurrentDelay);
   }
