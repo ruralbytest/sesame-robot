@@ -26,12 +26,24 @@
 
 #include <ESP32Servo.h>
 
-const int   servoPins[8]   = {  1,    2,    3,    4,    5,    6,    7,    8  };
+// Set to 1 to match XIAO_REVERSE_BODY=1 in the main firmware (front and rear
+// swapped, same wiring, roles swapped diagonally).
+#define XIAO_REVERSE_BODY 0
+
 const char* servoLabels[8] = { "R1", "R2", "L1", "L2", "R4", "R3", "L3", "L4" };
+#if XIAO_REVERSE_BODY
+const int   servoPins[8]   = {  4,    3,    2,    1,    7,    8,    5,    6  };
+const char* servoDpins[8]  = { "D3", "D2", "D1", "D0", "D8", "D9", "D4", "D5" };
+// Older XIAO + OLED wiring (XIAO_HEAD_LINK=0), reversed:
+//const int   servoPins[8]   = {  2,    3,    4,    1,   43,    8,    7,    9  };
+//const char* servoDpins[8]  = { "D1", "D2", "D3", "D0", "D6", "D9", "D8", "D10"};
+#else
+const int   servoPins[8]   = {  1,    2,    3,    4,    5,    6,    7,    8  };
 const char* servoDpins[8]  = { "D0", "D1", "D2", "D3", "D4", "D5", "D8", "D9" };
 // Older XIAO + OLED wiring (XIAO_HEAD_LINK=0):
 //const int   servoPins[8]   = {  1,    4,    3,    2,    7,    9,   43,    8  };
 //const char* servoDpins[8]  = { "D0", "D3", "D2", "D1", "D8", "D10","D6", "D9" };
+#endif
 
 const int CENTER = 90;   // test sweeps around the servo's centre
 const int SWING  = 30;   // +/- degrees - gentle but clearly visible

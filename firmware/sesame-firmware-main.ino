@@ -8,6 +8,16 @@
 #define XIAO_HEAD_LINK 1
 #endif
 
+// --- XIAO reversed body ---
+// 1 = swap front and rear (the robot turned 180 degrees, head moved to the
+// old rear end). No rewiring: each servo takes over the job of the servo
+// diagonally across from it, which uses the same angles, so every pose and
+// gait works unchanged toward the new front. Re-check subtrims after
+// switching. 0 = the original orientation (kept as the backup).
+#if defined(ARDUINO_XIAO_ESP32S3) && !defined(XIAO_REVERSE_BODY)
+#define XIAO_REVERSE_BODY 0
+#endif
+
 // --- PCBCupid Glyph ESP32-S3 head link ---
 // Auto-selected with the "Pcbcupid GLYPH S3" (or "... S3 PSRAM") board.
 // Like the XIAO it defaults to the round head board, here on UART1
@@ -186,8 +196,14 @@ Servo servos[8];
 // LEDC hardware PWM via ESP32Servo. Hips on D0-D3, knees on D4/D5/D8/D9, in
 // servo-index order, so the GPIOs run 1 to 8. D6/D7 carry the head link;
 // no servo sits on a boot-log pin. D10 (GPIO9) is spare.
+#if XIAO_REVERSE_BODY
+// Reversed body: the same wires, roles swapped diagonally.
+//   R1=D3  R2=D2  L1=D1  L2=D0  R4=D8  R3=D9  L3=D4  L4=D5
+const int servoPins[8] = {4, 3, 2, 1, 7, 8, 5, 6};
+#else
 //   R1=D0  R2=D1  L1=D2  L2=D3  R4=D4  R3=D5  L3=D8  L4=D9
 const int servoPins[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+#endif
 #elif defined(ARDUINO_XIAO_ESP32S3)
 // Seeed Studio XIAO ESP32-S3 with the SSD1306 OLED (XIAO_HEAD_LINK=0) - all
 // 8 servos run on LEDC hardware PWM via ESP32Servo (the S3 has 8 LEDC
@@ -195,8 +211,14 @@ const int servoPins[8] = {1, 2, 3, 4, 5, 6, 7, 8};
 // D7 is free.
 // L3 is on D6 (GPIO43, the UART0 boot-log pin) -> brief harmless twitch on
 // reset; move L3 to the free D7 (GPIO44) and update this array to avoid it.
+#if XIAO_REVERSE_BODY
+// Reversed body: the same wires, roles swapped diagonally.
+//   R1=D1  R2=D2  L1=D3  L2=D0  R4=D6  R3=D9  L3=D8  L4=D10
+const int servoPins[8] = {2, 3, 4, 1, 43, 8, 7, 9};
+#else
 //   R1=D0  R2=D3  L1=D2  L2=D1  R4=D8  R3=D10  L3=D6  L4=D9
 const int servoPins[8] = {1, 4, 3, 2, 7, 9, 43, 8};
+#endif
 #elif GLYPH_S3
 // PCBCupid Glyph ESP32-S3 - same servo pins with or without the head link,
 // in servo-index order. Kept off IO0 (boot strap), IO1 (battery sense, MSR),

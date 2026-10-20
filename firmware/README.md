@@ -839,7 +839,16 @@ The body sends `F:` lines only when the face or mode changes, and repeats the la
 | **I2C SDA**     | -           | **D4**   | **5**    | SSD1306 Data (Hardware I2C)  |
 | **I2C SCL**     | -           | **D5**   | **6**    | SSD1306 Clock (Hardware I2C) |
 
-D7 is the only unused GPIO. To verify either wiring one servo at a time (the tester defaults to the head-link map), flash [debugging-firmware/xiao-mapping-tester](debugging-firmware/xiao-mapping-tester/xiao-mapping-tester.ino).
+##### Reversed body (`XIAO_REVERSE_BODY=1`)
+
+To swap the robot's front and rear (head moved to the old rear end), build with `-DXIAO_REVERSE_BODY=1` or set `XIAO_REVERSE_BODY` to 1 at the top of the sketch. Nothing is rewired: each servo takes over the role of the servo diagonally across from it (R1↔L2, R2↔L1, R3↔L4, R4↔L3), which uses the same angles, so every pose works unchanged. Re-check subtrims after switching. The default (0) keeps the original orientation.
+
+| Role | R1 | R2 | L1 | L2 | R4 | R3 | L3 | L4 |
+| ---- | -- | -- | -- | -- | -- | -- | -- | -- |
+| Head link pin | D3 | D2 | D1 | D0 | D8 | D9 | D4 | D5 |
+| OLED wiring pin | D1 | D2 | D3 | D0 | D6 | D9 | D8 | D10 |
+
+D7 is the only unused GPIO in the OLED wiring. To verify either wiring one servo at a time (the tester defaults to the head-link map), flash [debugging-firmware/xiao-mapping-tester](debugging-firmware/xiao-mapping-tester/xiao-mapping-tester.ino).
 
 > [!NOTE]
 > L3 is on D6 (GPIO43), the ESP32-S3 UART0 TX / boot-log pin — expect a brief,
