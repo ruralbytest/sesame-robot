@@ -5,8 +5,7 @@ Three original procedural characters for the Waveshare ESP32-S3-Touch-AMOLED-1.4
 ## Try it
 
 - Power the head over USB. A character appears without the body.
-- Tap the screen: affection and a short synthesized pet call.
-- Double-tap: the body does a trick, cycling wave → bow → dance → cute → point → shrug. Without a linked body (or with body control off) the head only shows that trick's expression and sound.
+- Tap the screen: the body does a trick, cycling wave → bow → dance → cute → point → shrug. Without a linked body (or with body control off) the head only shows that trick's expression and sound.
 - Touch the screen while the body is moving: the body stops. That touch does nothing else.
 - Swipe: cycle lion → puppy → robot.
 - Hold still for about one second: calm face and purr; the body stops and any showcase ends.
@@ -18,7 +17,7 @@ The control page offers characters, moods, showcase, body-follow mode, speaker m
 
 ## Existing body link
 
-This head listens at 115200 baud on RX GPIO44 for the body's `F:<name>,<loop|once|boomerang>` face lines and `M:<move>` move lines (`M:idle` when the body stops). On TX GPIO43 it sends `C:<trick>` for a double-tap and `C:stop` for a hold or a touch during a move, only while body control is on and the body is linked. It never sends walking commands, and all tricks it sends end on their own.
+This head listens at 115200 baud on RX GPIO44 for the body's `F:<name>,<loop|once|boomerang>` face lines and `M:<move>` move lines (`M:idle` when the body stops). On TX GPIO43 it sends `C:<trick>` for a tap and `C:stop` for a hold or a touch during a move, only while body control is on and the body is linked. It never sends walking commands, and all tricks it sends end on their own.
 
 | Body XIAO | Head |
 |---|---|

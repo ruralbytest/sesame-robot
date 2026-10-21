@@ -39,7 +39,7 @@ static constexpr uint32_t MOVE_HOLD_MS=3000;
 static uint32_t manualUntil=0,nextFrame=0,lastAudioReaction=0,showStart=0;
 static float noiseFloor=.002f,energy=0,framesPerSecond=0;
 static uint32_t frames=0,fpsAt=0;
-// Touch can drive the body: double-tap sends the next trick, hold sends stop,
+// Touch can drive the body: a tap sends the next trick, hold sends stop,
 // and any touch while the body moves sends stop. Only one-shot poses are used,
 // so the robot never walks off from a touch. Switch off on the web page/USB.
 static bool bodyControl=true;
@@ -293,7 +293,7 @@ static void initWeb(){
     else if(a=="sound"){soundEnabled.store(v=="1");reply=soundEnabled?"Sound on":"Sound muted";}
     else if(a=="react"){reactEnabled=v=="1";reply=reactEnabled?"Sound reactions on":"Sound reactions paused";}
     else if(a=="battery"){saveBatteryFitted(v=="1");reply=batteryFitted?"Battery icon on. Saved.":"No battery: icon hidden. Saved.";}
-    else if(a=="body"){bodyControl=v=="1";reply=bodyControl?"Double-tap the head for a trick. Touch it to stop.":"Touch reacts on the head only.";}
+    else if(a=="body"){bodyControl=v=="1";reply=bodyControl?"Tap the head for a trick. Touch it while moving to stop.":"Touch reacts on the head only.";}
     else if(a=="wifioff"){int m=v.toInt();if(!validWifiOff(m)||(m==0&&v!="0")){server.send(400,"text/plain","Unknown time");return;}
       saveWifiOff(m);reply=m?"Wi-Fi turns off after "+String(m)+" min with no phone. Saved.":"Wi-Fi stays on. Saved.";}
     else if(a=="chirp"){chirp(1);preview(HAPPY,2000);reply="Hello!";}
@@ -327,15 +327,14 @@ static void interactions(){
       down=false;
       if(!longDone&&!stopTouch){
         if(abs(latestX-firstX)>65||abs(latestY-firstY)>65){scene.character=(scene.character+1)%3;chirp(1);lastTapAt=0;}
-        else if(lastTapAt&&now-lastTapAt<500){
-          // Double-tap: next trick. The first tap already showed love.
-          lastTapAt=0;const char* trick=TRICKS[nextTrick];nextTrick=(nextTrick+1)%(sizeof(TRICKS)/sizeof(TRICKS[0]));
+        else{
+          // Single tap: next trick.
+          lastTapAt=now;const char* trick=TRICKS[nextTrick];nextTrick=(nextTrick+1)%(sizeof(TRICKS)/sizeof(TRICKS[0]));
           showcase=false;
           // The body's "M:" reply brings the move's expression and sound.
           if(canDriveBody()){manualUntil=0;sendBody(trick);}
           else{Move m=moveFromName(trick);previewMove(m,3000);moveSound(m);}
         }
-        else{lastTapAt=now;preview(LOVE,4500);chirp(2);}
       }
     }
   }
@@ -376,7 +375,7 @@ void auroraSetup(){
   readBattery();
   Serial.printf("Started by: %s (brownouts so far: %lu). Battery %d mV, %d%%%s\n",resetName(startReason),(unsigned long)brownouts,(int)batteryMv,batteryPercent,charging?", charging":"");
   touchReady=initPeripherals();initWeb();fpsAt=millis();chirp(1);
-  Serial.println("Aurora ready. Tap=love, double-tap=body trick, swipe=pet, hold=calm/stop, BOOT=showcase. USB: ?, SNAP, SHOW, FOLLOW, BODY:0|1, WIFI:ON, WIFIOFF:0|1|3|5, PET:0..2, CHIRP, F:happy, M:crab");
+  Serial.println("Aurora ready. Tap=body trick, swipe=pet, hold=calm/stop, BOOT=showcase. USB: ?, SNAP, SHOW, FOLLOW, BODY:0|1, WIFI:ON, WIFIOFF:0|1|3|5, PET:0..2, CHIRP, F:happy, M:crab");
 }
 void auroraLoop(){
   bodyReader.poll();usb.poll();server.handleClient();
