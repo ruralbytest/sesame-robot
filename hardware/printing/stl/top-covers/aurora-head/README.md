@@ -75,7 +75,7 @@ Print every part in the orientation it is exported in. The domes inside the cap 
 - Ear sockets are a 10 × 8 × 1 mm recess with a magnet pocket under it, 38° either side of the top. The bunny ears lean inwards. One file makes both sides because the part is flipped over for the left socket.
 - The head adds roughly 40 g (display) plus about 30 g of print, centred about 50 mm above the roof and slightly ahead of the ball. Check the stand and walk gaits on the bench before trusting it on a table edge.
 
-v100 (the cat-eared head on a fixed stem) is in the git history.
+v100 (the cat-eared head on a fixed stem) is in the git history. The ten concept heads that were compared before settling on the ball joint and magnet ears are in [design-options.md](design-options.md), and the electronics side of the build is in [docs/two-brain-build](../../../../../docs/two-brain-build/README.md).
 
 ## Remixing
 

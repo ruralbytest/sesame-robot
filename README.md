@@ -71,6 +71,8 @@ Follow the **[Build Guide](docs/build-guide/README.md)** and **[Wiring Guide](do
 
 ### 4. Flash Firmware 
 Upload the code from the **[Firmware Directory](firmware/README.md)**.
+
+Building the two-board version with a round AMOLED head? Start with the **[Two-brain build notes](docs/two-brain-build/README.md)** and the **[Aurora head](hardware/printing/stl/top-covers/aurora-head/README.md)**.
 *   Requires Arduino IDE
 *   Configure WiFi AP settings
 
