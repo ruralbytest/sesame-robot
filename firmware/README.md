@@ -111,7 +111,7 @@ This document provides technical information on the firmware architecture, contr
    - Open Serial Monitor (**Tools → Serial Monitor**, set baud rate to 115200)
    - Reset the board - you should see startup messages and network information
    - The serial monitor provides individual motor control for testing and troubleshooting
-   - **If using AP mode only**: Connect to the "Sesame-Controller-BETA" WiFi network (password: `12345678`) and navigate to any website
+   - **If using AP mode only**: Connect to the "Sesame-Controller" WiFi network (password: `12345678`) and navigate to any website
    - **If using network mode**: Look for the "Connected to network!" message in Serial Monitor, then access via `http://sesame-robot.local` or the displayed IP address
 
 ### Troubleshooting
@@ -198,7 +198,7 @@ The firmware now supports **dual-mode WiFi operation**, allowing the robot to si
 
 By default, the robot creates its own WiFi network:
 
-- **SSID**: `Sesame-Controller-BETA`
+- **SSID**: `Sesame-Controller`
 - **Password**: `12345678` (Some devices may require you to change this if the default isn't connecting)
 - **IP Address**: `192.168.4.1`
 
@@ -208,7 +208,7 @@ Connect to this network and navigate to any website to access the captive portal
 
 You can join the robot to your network at runtime, without editing the code:
 
-1. Connect to the `Sesame-Controller-BETA` access point and open the captive portal.
+1. Connect to the `Sesame-Controller` access point and open the captive portal.
 2. Go to **Settings → WiFi / Network**, tap **Scan for Networks**, and pick your **2.4GHz** network (or tick *Enter name manually* for a hidden SSID).
 3. Enter the password and tap **Connect**. The connection runs in the background and the page polls for the result (takes ~15s). Your phone may briefly drop off the robot's network while the robot switches WiFi channel — it reconnects automatically and the page recovers.
 4. On success the panel shows the link to `http://sesame-robot.local` and the assigned IP.
