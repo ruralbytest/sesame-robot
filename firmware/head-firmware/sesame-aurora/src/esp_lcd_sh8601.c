@@ -2,6 +2,9 @@
  * SPDX-FileCopyrightText: 2023 Espressif Systems (Shanghai) CO LTD
  *
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * Modified 2026 by the Sesame Robot contributors: the panel draw function
+ * now propagates pixel-transfer errors instead of discarding them.
 */
 #include <stdlib.h>
 #include <sys/cdefs.h>

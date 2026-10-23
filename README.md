@@ -4,8 +4,10 @@ ___
 ![Microcontroller](https://img.shields.io/badge/Microcontroller-ESP32-blue)
 ![Firmware](https://img.shields.io/badge/Firmware-C%2B%2B-blue?logo=c%2B%2B)
 ![IDE](https://img.shields.io/badge/IDE-Arduino-00979D?logo=arduino&logoColor=white)
-![GitHub stars](https://img.shields.io/github/stars/dorianborian/sesame-robot?style=social)
-![GitHub forks](https://img.shields.io/github/forks/dorianborian/sesame-robot?style=social)
+![GitHub stars](https://img.shields.io/github/stars/ruralbytest/sesame-robot?style=social)
+![GitHub forks](https://img.shields.io/github/forks/ruralbytest/sesame-robot?style=social)
+
+This repository is a fork of [dorianborian/sesame-robot](https://github.com/dorianborian/sesame-robot) that adds support for the PCBCupid Glyph ESP32-S3, the Seeed XIAO ESP32-S3, a PCA9685 servo driver and the Aurora head. Everything is released under the Apache License 2.0; see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 <img width="100%" height="728" alt="sesame-cover" src="https://github.com/user-attachments/assets/f0cc6ad0-135b-4515-8750-900f224ed7ae" />
 

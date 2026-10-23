@@ -1,0 +1,20 @@
+The Sesame Robot Project
+Copyright 2025 Dorian Borian and the Sesame Robot contributors
+Copyright 2026 Shahul Ameed (Glyph ESP32-S3, XIAO ESP32-S3, PCA9685 and Aurora head additions)
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+This repository is a fork of https://github.com/dorianborian/sesame-robot.
+
+Third-party code
+----------------
+firmware/head-firmware/sesame-head/src/esp_lcd_sh8601.*
+firmware/head-firmware/sesame-aurora/src/esp_lcd_sh8601.*
+firmware/head-firmware/sesame-aurora/src/esp_codec_dev/
+  Copyright 2023 Espressif Systems (Shanghai) CO LTD, Apache License 2.0.
+  Taken from the Waveshare ESP32-S3-Touch-AMOLED-1.43C examples
+  (https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.43C).
+  The Aurora copy of esp_lcd_sh8601.c is modified; see its file header.
+
+Hardware files (CAD, STL, Gerbers) are also distributed under the Apache
+License 2.0 unless a folder states otherwise.

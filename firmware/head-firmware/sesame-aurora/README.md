@@ -78,7 +78,7 @@ The startup order retains the tested clear-before-display-on fix. The original o
 
 ## Backup
 
-The sibling `sesame-working-backup-2026-10-19` folder contains the working monochrome head source, face bitmap file and compiled binaries from before Aurora. Its restore script uploads only the head. The original repository head sketch is also left intact; Aurora is a separate sketch.
+The original monochrome head sketch in `../sesame-head/` is left intact; Aurora is a separate sketch.
 
 ## Sources and licenses
 
